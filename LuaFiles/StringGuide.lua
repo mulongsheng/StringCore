@@ -24,6 +24,15 @@ M.MitigationUI = {
     visible = false
 }
 
+-- 队伍列表（按顺序：1=MT, 2=ST, 3=H1, 4=H2, 5=D1, 6=D2, 7=D3, 8=D4）
+M.PartyList = {}
+
+-- 拖动状态
+M.DragState = {
+    pos = 0,       -- 当前拖动的位置
+    selected = 0   -- 当前选中的位置
+}
+
 -- =============================================
 -- 副本映射表
 -- =============================================
@@ -118,9 +127,12 @@ end
 -- =============================================
 
 -- 获取职业名称
-M.GetJobNameById = function(jobId)
+M.GetJobName = function(jobId)
     return M.JobNames[jobId] or "未知"
 end
+
+-- 别名
+M.GetJobNameById = M.GetJobName
 
 -- 数组查找索引
 M.IndexOf = function(tbl, value)
@@ -198,44 +210,39 @@ end
 -- 获取队伍成员列表
 M.GetPartyPlayers = function()
     local members = {}
-    local party = EntityList("myparty")
+    local addedIds = {}  -- 记录已添加的 ID，防止重复
     
-    if party then
-        for _, entity in pairs(party) do
-            if entity.job and entity.job > 0 then
+    -- 使用 TensorCore API 获取队友
+    if TensorCore and TensorCore.getEntityGroupList then
+        for k, v in pairs(TensorCore.getEntityGroupList("Party")) do
+            if not addedIds[v.id] then
                 table.insert(members, {
-                    id = entity.id,
-                    name = entity.name,
-                    job = entity.job
+                    id = v.id,
+                    name = v.name,
+                    job = v.job
                 })
+                addedIds[v.id] = true
             end
         end
     end
     
-    -- 添加自己
-    if Player and Player.job and Player.job > 0 then
-        local selfInParty = false
-        for _, m in ipairs(members) do
-            if m.id == Player.id then
-                selfInParty = true
-                break
-            end
-        end
-        if not selfInParty then
-            table.insert(members, {
-                id = Player.id,
-                name = Player.name,
-                job = Player.job
-            })
-        end
+    -- 添加玩家自己（如果还没添加）
+    if Player and not addedIds[Player.id] then
+        table.insert(members, {
+            id = Player.id,
+            name = Player.name,
+            job = Player.job
+        })
     end
     
+    d("[StringCore] 获取到 " .. #members .. " 名队伍成员")
     return members
 end
 
 -- 加载并分配队伍职能
 M.LoadParty = function()
     M.Party = {}
+    M.PartyList = {}
     local members = M.GetPartyPlayers()
     
     if #members == 0 then
@@ -248,28 +255,91 @@ M.LoadParty = function()
         return M.IndexOf(M.JobIds, p1.job) < M.IndexOf(M.JobIds, p2.job)
     end)
     
-    -- 自动分配职能
-    for _, member in ipairs(members) do
+    -- 4人副本处理
+    if #members == 4 then
+        for i = 1, 4 do
+            local member = members[i]
+            if M.IsTank(member.job) then
+                if M.Party.MT == nil then
+                    M.Party.MT = member
+                end
+            elseif M.IsHealer(member.job) then
+                if M.Party.H1 == nil then
+                    M.Party.H1 = member
+                end
+            else
+                if M.Party.D1 == nil then
+                    M.Party.D1 = member
+                elseif M.Party.D2 == nil then
+                    M.Party.D2 = member
+                end
+            end
+        end
+        M.GetSelfPos()
+        d("[StringCore] 4人队伍已加载")
+        return
+    end
+    
+    -- 8人副本
+    local memberHasSet = {}
+    
+    -- 第一轮：按职业类型分配标准职能
+    for i = 1, #members do
+        local member = members[i]
         if M.IsTank(member.job) then
             if M.Party.MT == nil then
                 M.Party.MT = member
+                table.insert(memberHasSet, member.id)
             elseif M.Party.ST == nil then
                 M.Party.ST = member
+                table.insert(memberHasSet, member.id)
             end
         elseif M.IsHealer(member.job) then
             if M.Party.H1 == nil then
                 M.Party.H1 = member
+                table.insert(memberHasSet, member.id)
             elseif M.Party.H2 == nil then
                 M.Party.H2 = member
+                table.insert(memberHasSet, member.id)
             end
         elseif M.IsMelee(member.job) then
             if M.Party.D1 == nil then
                 M.Party.D1 = member
+                table.insert(memberHasSet, member.id)
             elseif M.Party.D2 == nil then
                 M.Party.D2 = member
+                table.insert(memberHasSet, member.id)
             end
-        elseif M.IsRange(member.job) or M.IsMagic(member.job) then
+        elseif M.IsRange(member.job) then
             if M.Party.D3 == nil then
+                M.Party.D3 = member
+                table.insert(memberHasSet, member.id)
+            end
+        elseif M.IsMagic(member.job) then
+            if M.Party.D4 == nil then
+                M.Party.D4 = member
+                table.insert(memberHasSet, member.id)
+            end
+        end
+    end
+    
+    -- 第二轮：填充未分配的空位
+    for i = 1, #members do
+        local member = members[i]
+        if not table.contains(memberHasSet, member.id) then
+            if M.Party.MT == nil then
+                M.Party.MT = member
+            elseif M.Party.ST == nil then
+                M.Party.ST = member
+            elseif M.Party.H1 == nil then
+                M.Party.H1 = member
+            elseif M.Party.H2 == nil then
+                M.Party.H2 = member
+            elseif M.Party.D1 == nil then
+                M.Party.D1 = member
+            elseif M.Party.D2 == nil then
+                M.Party.D2 = member
+            elseif M.Party.D3 == nil then
                 M.Party.D3 = member
             elseif M.Party.D4 == nil then
                 M.Party.D4 = member
@@ -280,7 +350,32 @@ M.LoadParty = function()
     -- 确定自己的职能
     M.GetSelfPos()
     
-    d("[StringCore] 队伍已加载，共 " .. #members .. " 人")
+    -- 同步到 PartyList 数组（按顺序：MT, ST, H1, H2, D1, D2, D3, D4）
+    M.PartyList = {}
+    for i, posName in ipairs(M.JobPosName) do
+        M.PartyList[i] = M.Party[posName] or { id = 0, name = "空位", job = 0 }
+    end
+    
+    -- 打印队伍信息
+    local count = 0
+    for i, member in ipairs(M.PartyList) do
+        if member and member.id ~= 0 then
+            count = count + 1
+            d("[StringCore] " .. M.JobPosName[i] .. ": " .. tostring(member.name) .. " (" .. M.GetJobName(member.job) .. ")")
+        end
+    end
+    d("[StringCore] 队伍已加载，共 " .. count .. " 人，自己位置: " .. tostring(M.SelfPos))
+end
+
+-- 从 PartyList 同步到 Party
+M.SyncPartyFromList = function()
+    M.Party = {}
+    for i, member in ipairs(M.PartyList) do
+        if member and member.id ~= 0 then
+            M.Party[M.JobPosName[i]] = member
+        end
+    end
+    M.GetSelfPos()
 end
 
 -- 获取自己的职能位置
