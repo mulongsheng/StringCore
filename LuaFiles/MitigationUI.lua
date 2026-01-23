@@ -30,7 +30,6 @@ M.DrawMitigationUI = function()
         GUI:SameLine(0, 0)
         GUI:TextColored(0.2, 1.0, 0.2, 1.0, M.CurrentRaid or "未知")
         
-        GUI:SameLine(150, 0)
         GUI:Text("职业: ")
         GUI:SameLine(0, 0)
         if Player then
