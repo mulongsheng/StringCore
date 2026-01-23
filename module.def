@@ -1,0 +1,6 @@
+[Module]
+Name=StringCore
+Dependencies=minionlib,TensorCore
+Version=1
+Files=StringCore.lua
+Enabled=1
