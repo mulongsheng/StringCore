@@ -3,7 +3,10 @@
 -- 包含：状态显示、功能按钮
 -- =============================================
 
-local function DrawUI(M)
+local M = StringGuide
+if not M then return end
+
+M.DrawMainUI = function()
     
     -- 设置窗口初始大小和位置
     GUI:SetNextWindowSize(280, 0, GUI.SetCond_Appearing)
@@ -158,4 +161,4 @@ local function DrawUI(M)
     
 end
 
-return DrawUI
+d("[StringCore] MainUI.lua 加载完成")

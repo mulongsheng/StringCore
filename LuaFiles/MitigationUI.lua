@@ -3,7 +3,10 @@
 -- 包含：AOE 复选框、配置自动保存
 -- =============================================
 
-local function DrawUI(M)
+local M = StringGuide
+if not M then return end
+
+M.DrawMitigationUI = function()
     
     -- 检查是否在支持的副本中
     if not M.IsInSupportedRaid() then
@@ -229,4 +232,4 @@ local function DrawUI(M)
     
 end
 
-return DrawUI
+d("[StringCore] MitigationUI.lua 加载完成")

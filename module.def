@@ -1,6 +1,6 @@
 [Module]
 Name=StringCore
-Dependencies=minionlib,TensorCore
+Dependencies=minionlib
 Version=1
-Files=StringCore.lua
+Files=LuaFiles\StringGuide.lua,LuaFiles\Mitigation.lua,LuaFiles\MainUI.lua,LuaFiles\MitigationUI.lua,StringCore.lua
 Enabled=1

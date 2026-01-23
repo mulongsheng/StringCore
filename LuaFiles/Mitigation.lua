@@ -1,11 +1,17 @@
 -- =============================================
 -- Mitigation - 减伤数据定义模块
 -- 包含：AoeNames、JobMap、配置加载/保存
+-- 直接操作全局变量 StringGuide
 -- =============================================
 
-local function MitigationDef(M)
-    
-    M.Mitigation = {}
+-- 等待 StringGuide 加载（由 module.def 顺序保证）
+local M = StringGuide
+if not M then
+    d("[StringCore] 警告: Mitigation.lua 加载时 StringGuide 不存在，跳过")
+    return
+end
+
+M.Mitigation = {}
     
     -- =============================================
     -- 职业技能映射
@@ -261,6 +267,6 @@ local function MitigationDef(M)
         return M.Config.Mitigation[aoeKey][skillType] == true
     end
     
-end
-
-return MitigationDef
+-- 初始化完成标记
+M.MitigationLoaded = true
+d("[StringCore] Mitigation.lua 加载完成")

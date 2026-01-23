@@ -3,7 +3,8 @@
 -- 包含：配置管理、队伍管理、职业判断、工具方法
 -- =============================================
 
-local M = {}
+StringGuide = {}
+local M = StringGuide  -- 本地别名，方便引用
 
 -- =============================================
 -- 基础配置
@@ -318,4 +319,5 @@ M.GetTankPartner = function()
     return nil
 end
 
-return M
+-- 模块加载完成
+d("[StringCore] StringGuide.lua 加载完成")
