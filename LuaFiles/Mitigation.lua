@@ -57,66 +57,61 @@ M.Mitigation = {}
     -- AOE 技能列表（按副本分组）
     -- 格式：{ key = "唯一标识", p = 阶段, name = "显示名称", macroInfo = "宏简称" }
     -- =============================================
-    M.Mitigation.AoeNames = {
+    -- =============================================
+    -- AOE 时间线数据（按副本和阶段组织）
+    -- 格式：{ phase = "P1", name = "阶段名", aoes = { {key, name}, ... } }
+    -- =============================================
+    M.Mitigation.AoeTimeline = {
+        -- 永远之暗歼灭战 (mapId: 1295)
+        ["永远之暗歼灭战"] = {
+            { phase = "P1", name = "P1 阶段", aoes = {
+                -- TODO: 由用户提供 AOE 数据
+            }},
+        },
+        
         -- M9S (mapId: 1321)
         ["M9S"] = {
-            -- TODO: 由用户提供 AOE 数据
-            -- 示例格式：
-            -- { key = "Aoe1", p = 1, name = "AOE技能1", macroInfo = "AOE1" },
+            { phase = "P1", name = "P1 阶段", aoes = {
+                { key = "P1_AOE1", name = "示例AOE1" },
+                { key = "P1_AOE2", name = "示例AOE2" },
+            }},
+            { phase = "P2", name = "P2 阶段", aoes = {
+                { key = "P2_AOE1", name = "示例AOE3" },
+            }},
+            -- TODO: 由用户补充完整 AOE 数据
         },
         
         -- M10S (mapId: 1323)
         ["M10S"] = {
-            -- TODO: 由用户提供 AOE 数据
+            { phase = "P1", name = "P1 阶段", aoes = {
+                -- TODO: 由用户提供 AOE 数据
+            }},
         },
         
         -- M11S (mapId: 1325)
         ["M11S"] = {
-            -- TODO: 由用户提供 AOE 数据
+            { phase = "P1", name = "P1 阶段", aoes = {
+                -- TODO: 由用户提供 AOE 数据
+            }},
         },
         
         -- M12S (mapId: 1327)
         ["M12S"] = {
-            -- TODO: 由用户提供 AOE 数据
+            { phase = "P1", name = "P1 阶段", aoes = {
+                -- TODO: 由用户提供 AOE 数据
+            }},
         },
     }
     
     -- =============================================
-    -- 获取当前副本的 AOE 列表
+    -- 获取当前副本的 AOE 时间线
     -- =============================================
-    M.Mitigation.GetAoeNames = function()
-        if M.CurrentRaid then
-            return M.Mitigation.AoeNames[M.CurrentRaid] or {}
+    M.Mitigation.GetAoeTimeline = function(raidId)
+        local raid = raidId or M.CurrentRaid
+        if raid then
+            return M.Mitigation.AoeTimeline[raid] or {}
         end
         return {}
-    end
-    
-    -- =============================================
-    -- 获取指定阶段的 AOE 列表
-    -- =============================================
-    M.Mitigation.GetAoeNamesByPhase = function(phase)
-        local aoeList = M.Mitigation.GetAoeNames()
-        local result = {}
-        for _, aoe in ipairs(aoeList) do
-            if aoe.p == phase then
-                table.insert(result, aoe)
-            end
-        end
-        return result
-    end
-    
-    -- =============================================
-    -- 获取当前副本的阶段数
-    -- =============================================
-    M.Mitigation.GetPhaseCount = function()
-        local aoeList = M.Mitigation.GetAoeNames()
-        local maxPhase = 0
-        for _, aoe in ipairs(aoeList) do
-            if aoe.p and aoe.p > maxPhase then
-                maxPhase = aoe.p
-            end
-        end
-        return maxPhase
     end
     
     -- =============================================
@@ -124,14 +119,17 @@ M.Mitigation = {}
     -- =============================================
     M.Mitigation.LoadDefault = function(raidId)
         local defaultConfig = {}
-        local aoeList = M.Mitigation.AoeNames[raidId] or {}
+        local timeline = M.Mitigation.AoeTimeline[raidId] or {}
         
-        for _, aoe in ipairs(aoeList) do
-            defaultConfig[aoe.key] = {
-                p = aoe.p,
-                Target = false,
-                Field = false
-            }
+        -- 遍历时间线中所有阶段的 AOE
+        for _, phaseData in ipairs(timeline) do
+            if phaseData.aoes then
+                for _, aoe in ipairs(phaseData.aoes) do
+                    if aoe.key then
+                        defaultConfig[aoe.key] = false
+                    end
+                end
+            end
         end
         
         return defaultConfig
@@ -260,11 +258,21 @@ M.Mitigation = {}
     -- =============================================
     -- 检查配置项是否启用
     -- 用于时间轴 conditionLua 调用
+    -- 用法: StringGuide.Mitigation.IsEnabled("P1_AOE1")
     -- =============================================
-    M.Mitigation.IsEnabled = function(aoeKey, skillType)
+    M.Mitigation.IsEnabled = function(aoeKey)
         if not M.Config.Mitigation then return false end
-        if not M.Config.Mitigation[aoeKey] then return false end
-        return M.Config.Mitigation[aoeKey][skillType] == true
+        return M.Config.Mitigation[aoeKey] == true
+    end
+    
+    -- =============================================
+    -- 设置配置项
+    -- =============================================
+    M.Mitigation.SetEnabled = function(aoeKey, enabled)
+        if not M.Config.Mitigation then
+            M.Config.Mitigation = {}
+        end
+        M.Config.Mitigation[aoeKey] = enabled
     end
     
 -- 初始化完成标记
