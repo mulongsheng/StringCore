@@ -11,6 +11,7 @@ local M = StringGuide  -- 本地别名，方便引用
 -- =============================================
 M.VERSION = "1.0.0"
 M.DevelopMode = false  -- 开发模式：热加载 UI 文件
+M.IgnoreMapCheck = false  -- 开发者选项：无视地图ID检查
 
 -- UI 状态
 M.UI = {
@@ -37,7 +38,6 @@ M.DragState = {
 -- 副本映射表
 -- =============================================
 M.RaidMap = {
-    [1295] = "永远之暗歼灭战",
     [1321] = "M9S",
     [1323] = "M10S",
     [1325] = "M11S",
@@ -145,6 +145,7 @@ end
 
 -- 检查是否在支持的副本中
 M.IsInSupportedRaid = function()
+    if M.IgnoreMapCheck then return true end
     if not Player then return false end
     return M.RaidMap[Player.localmapid] ~= nil
 end

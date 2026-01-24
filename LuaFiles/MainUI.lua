@@ -159,6 +159,12 @@ M.DrawMainUI = function()
             
             -- 减伤配置按钮
             if M.IsInSupportedRaid() then
+                -- 开发模式下确保有默认副本
+                if M.IgnoreMapCheck and not M.CurrentRaid then
+                    M.CurrentRaid = "M9S"
+                    M.Mitigation.LoadRaidConfig(M.CurrentRaid)
+                end
+                
                 if GUI:Button("减伤配置", 120, 30) then
                     M.MitigationUI.open = not M.MitigationUI.open
                 end
@@ -175,6 +181,13 @@ M.DrawMainUI = function()
             
             -- 开发模式切换
             M.DevelopMode = GUI:Checkbox("开发模式 (热加载UI)", M.DevelopMode)
+            
+            -- 无视地图检查
+            M.IgnoreMapCheck = GUI:Checkbox("无视地图ID (开发用)", M.IgnoreMapCheck)
+            if M.IgnoreMapCheck then
+                GUI:SameLine()
+                GUI:TextColored(1.0, 0.5, 0.2, 1.0, "!")
+            end
             
             GUI:Unindent(10)
         end

@@ -14,14 +14,50 @@ M.DrawMitigationUI = function()
         return
     end
     
-    -- 设置窗口大小
+    -- 设置窗口大小（使用固定ID保持位置）
     GUI:SetNextWindowSize(400, 500, GUI.SetCond_Appearing)
     
-    -- 创建窗口
-    local windowTitle = "减伤配置 - " .. (M.CurrentRaid or "未知副本")
+    -- 创建窗口（使用固定ID，标题动态显示副本名）
+    local windowTitle = "减伤配置 - " .. (M.CurrentRaid or "未知副本") .. "###MitigationWindow"
     M.MitigationUI.visible, M.MitigationUI.open = GUI:Begin(windowTitle, M.MitigationUI.open)
     
     if M.MitigationUI.visible then
+        
+        -- =============================================
+        -- 开发者模式：副本选择
+        -- =============================================
+        if M.IgnoreMapCheck then
+            GUI:TextColored(1.0, 0.5, 0.2, 1.0, "[开发模式] 手动选择副本:")
+            
+            -- 获取所有副本名称并排序
+            local raidNames = {}
+            for mapId, raidName in pairs(M.RaidMap) do
+                table.insert(raidNames, raidName)
+            end
+            table.sort(raidNames)
+            
+            -- 查找当前副本索引
+            local currentIndex = 1
+            for i, name in ipairs(raidNames) do
+                if name == M.CurrentRaid then
+                    currentIndex = i
+                    break
+                end
+            end
+            
+            -- 副本下拉选择
+            GUI:PushItemWidth(200)
+            local newIndex = GUI:Combo("##RaidSelect", currentIndex, raidNames)
+            GUI:PopItemWidth()
+            
+            if newIndex ~= currentIndex and raidNames[newIndex] then
+                M.CurrentRaid = raidNames[newIndex]
+                M.Mitigation.LoadRaidConfig(M.CurrentRaid)
+                d("[StringCore] 手动切换副本: " .. M.CurrentRaid)
+            end
+            
+            GUI:Separator()
+        end
         
         -- =============================================
         -- 头部信息
@@ -81,9 +117,10 @@ M.DrawMitigationUI = function()
                             configChanged = true
                         end
                         
-                        -- 显示 key（用于复制到条件）
-                        GUI:SameLine(250, 0)
-                        GUI:TextColored(0.5, 0.5, 0.5, 1.0, "[" .. aoe.key .. "]")
+                        -- 鼠标悬停时显示 key（用于复制到条件）
+                        if GUI:IsItemHovered() then
+                            GUI:SetTooltip("Key: " .. aoe.key)
+                        end
                     end
                 else
                     GUI:TextColored(0.5, 0.5, 0.5, 1.0, "  (暂无 AOE 数据)")
