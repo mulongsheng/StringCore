@@ -29,19 +29,20 @@ M.DrawMitigationUI = function()
         if M.IgnoreMapCheck then
             GUI:TextColored(1.0, 0.5, 0.2, 1.0, "[开发模式] 手动选择副本:")
             
-            -- 获取所有副本名称并排序
-            local raidNames = {}
+            -- 获取所有副本并按 mapId 排序
+            local raids = {}
             for mapId, raidName in pairs(M.RaidMap) do
-                table.insert(raidNames, raidName)
+                table.insert(raids, { mapId = mapId, name = raidName })
             end
-            table.sort(raidNames)
+            table.sort(raids, function(a, b) return a.mapId < b.mapId end)
             
-            -- 查找当前副本索引
+            -- 提取排序后的名称列表
+            local raidNames = {}
             local currentIndex = 1
-            for i, name in ipairs(raidNames) do
-                if name == M.CurrentRaid then
+            for i, raid in ipairs(raids) do
+                table.insert(raidNames, raid.name)
+                if raid.name == M.CurrentRaid then
                     currentIndex = i
-                    break
                 end
             end
             

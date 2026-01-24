@@ -120,9 +120,13 @@ end
 -- =============================================
 -- 注册事件
 -- =============================================
-RegisterEventHandler("Module.Initalize", core.Initialize, AddonName)
-RegisterEventHandler("Gameloop.Update", core.Update, AddonName)
-RegisterEventHandler("Gameloop.Draw", core.Draw, AddonName)
+if core.Initialize and core.Update and core.Draw then
+    RegisterEventHandler("Module.Initalize", core.Initialize, AddonName)
+    RegisterEventHandler("Gameloop.Update", core.Update, AddonName)
+    RegisterEventHandler("Gameloop.Draw", core.Draw, AddonName)
+else
+    d("[StringCore] 警告: 部分函数未定义，事件注册失败")
+end
 
 d("[StringCore] StringCore.lua 加载完成")
 
