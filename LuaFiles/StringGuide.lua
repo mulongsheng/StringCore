@@ -25,6 +25,12 @@ M.MitigationUI = {
     visible = false
 }
 
+-- Map Effect 查看器 UI 状态
+M.MapEffectUI = {
+    open = false,
+    visible = false
+}
+
 -- 队伍列表（按顺序：1=MT, 2=ST, 3=H1, 4=H2, 5=D1, 6=D2, 7=D3, 8=D4）
 M.PartyList = {}
 

@@ -57,7 +57,7 @@ core.Initialize = function()
     
     -- 注册到 FFXIVMinion 菜单栏
     local iconPath = GetLuaModsPath() .. "StringCore\\Image\\MainIcon.png"
-    local tooltip = "StringCore 减伤规划系统"
+    local tooltip = "String的时尚小垃圾"
     
     ml_gui.ui_mgr:AddMember({
         id = "StringCore",
@@ -114,6 +114,11 @@ core.Draw = function()
     -- 绘制减伤配置界面
     if StringGuide.MitigationUI and StringGuide.MitigationUI.open and StringGuide.DrawMitigationUI then
         StringGuide.DrawMitigationUI()
+    end
+    
+    -- 绘制 Map Effect 查看器
+    if StringGuide.MapEffectUI and StringGuide.MapEffectUI.open and StringGuide.DrawMapEffectUI then
+        StringGuide.DrawMapEffectUI()
     end
 end
 

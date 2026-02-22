@@ -179,6 +179,18 @@ M.DrawMainUI = function()
             
             GUI:Spacing()
             
+            -- Map Effect 查看器按钮
+            if GUI:Button("Map Effect 查看器", 160, 30) then
+                M.MapEffectUI.open = not M.MapEffectUI.open
+            end
+            
+            if M.MapEffectUI.open then
+                GUI:SameLine(0, 10)
+                GUI:TextColored(0.2, 1.0, 0.2, 1.0, "(已打开)")
+            end
+            
+            GUI:Spacing()
+            
             -- 开发模式切换
             M.DevelopMode = GUI:Checkbox("开发模式 (热加载UI)", M.DevelopMode)
             
