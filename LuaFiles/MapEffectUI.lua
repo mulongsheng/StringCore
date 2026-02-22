@@ -94,32 +94,50 @@ local function RefreshEffects()
 
     for i = 0, numEffects - 1 do
         local res = Argus.getMapEffectResource(i)
+        if not res then
+            -- 资源不可用，仍然加入列表以保持索引完整
+            table.insert(State.effects, {
+                index = i,
+                resource = nil,
+                id = 0,
+                path = "(资源不可用)",
+                type = -1,
+                isActive = false,
+                position = { x = 0, y = 0, z = 0 },
+                scale = { x = 1, y = 1, z = 1 },
+                orientation = { dir = { x = 0, y = 0, z = 0 }, up = { x = 0, y = 1, z = 0 } },
+                renderType = nil,
+                renderState = nil,
+                scripts = {},
+                subresources = {},
+                unavailable = true,
+            })
+        end
         if res then
             local resId, resPath, resType, isActive = Argus.getEffectResourceInfo(res)
-            if resId then
-                local px, py, pz = Argus.getEffectResourcePosition(res)
-                local renderType, renderState = Argus.getEffectResourceRenderInfo(res)
-                local sx, sy, sz = Argus.getEffectResourceScale(res)
-                local dx, dy, dz, ux, uy, uz = Argus.getEffectResourceOrientation(res)
+            local px, py, pz = Argus.getEffectResourcePosition(res)
+            local renderType, renderState = Argus.getEffectResourceRenderInfo(res)
+            local sx, sy, sz = Argus.getEffectResourceScale(res)
+            local dx, dy, dz, ux, uy, uz = Argus.getEffectResourceOrientation(res)
 
-                local entry = {
-                    index = i,
-                    resource = res,
-                    id = resId,
-                    path = resPath or "",
-                    type = resType,
-                    isActive = isActive,
-                    position = { x = px or 0, y = py or 0, z = pz or 0 },
-                    scale = { x = sx or 1, y = sy or 1, z = sz or 1 },
-                    orientation = {
-                        dir = { x = dx or 0, y = dy or 0, z = dz or 0 },
-                        up = { x = ux or 0, y = uy or 1, z = uz or 0 },
-                    },
-                    renderType = renderType,
-                    renderState = renderState,
-                    scripts = {},
-                    subresources = {},
-                }
+            local entry = {
+                index = i,
+                resource = res,
+                id = resId or 0,
+                path = resPath or "",
+                type = resType or 0,
+                isActive = isActive or false,
+                position = { x = px or 0, y = py or 0, z = pz or 0 },
+                scale = { x = sx or 1, y = sy or 1, z = sz or 1 },
+                orientation = {
+                    dir = { x = dx or 0, y = dy or 0, z = dz or 0 },
+                    up = { x = ux or 0, y = uy or 1, z = uz or 0 },
+                },
+                renderType = renderType,
+                renderState = renderState,
+                scripts = {},
+                subresources = {},
+            }
 
                 -- Script 类型获取脚本和子资源
                 if resType == 6 then
@@ -164,7 +182,6 @@ local function RefreshEffects()
                 end
 
                 table.insert(State.effects, entry)
-            end
         end
     end
 end
@@ -173,6 +190,14 @@ end
 -- 过滤
 -- =============================================
 local function MatchesFilter(entry)
+    -- 不可用条目：类型过滤时如果选了具体类型则隐藏，否则显示
+    if entry.unavailable then
+        if State.filterType ~= 0 then return false end
+        if State.filterText ~= "" then
+            if not string.find(tostring(entry.index), State.filterText, 1, true) then return false end
+        end
+        return true
+    end
     if State.filterType ~= 0 and entry.type ~= State.filterType then return false end
     if State.filterText ~= "" then
         local kw = string.lower(State.filterText)
@@ -655,38 +680,47 @@ M.DrawMapEffectUI = function()
 
         for _, entry in ipairs(State.effects) do
             if MatchesFilter(entry) then
-                local col = GetTypeColor(entry.type)
-                local shortName = string.match(entry.path, "[^/\\]+$") or entry.path
-                local activeTag = entry.isActive and "" or " [Inactive]"
-                local label = string.format("[%d] %s  ID:%d  %s%s",
-                    entry.index, GetTypeName(entry.type), entry.id or 0, shortName, activeTag)
-
-                GUI:TextColored(col[1], col[2], col[3], col[4], label)
-
-                -- 左键展开/收起详情
-                if GUI:IsItemClicked(0) then
-                    if State.selectedIndex == entry.index then
-                        State.selectedIndex = -1
-                    else
-                        State.selectedIndex = entry.index
+                if entry.unavailable then
+                    -- 不可用条目：灰色显示
+                    GUI:TextColored(C.muted[1], C.muted[2], C.muted[3], C.muted[4],
+                        string.format("[%d] (资源不可用 - getMapEffectResource 返回 nil)", entry.index))
+                    if GUI:IsItemHovered() then
+                        GUI:SetTooltip("该索引的资源已卸载或不可访问")
                     end
-                end
+                else
+                    local col = GetTypeColor(entry.type)
+                    local shortName = string.match(entry.path, "[^/\\]+$") or entry.path
+                    local activeTag = entry.isActive and "" or " [Inactive]"
+                    local label = string.format("[%d] %s  ID:%d  %s%s",
+                        entry.index, GetTypeName(entry.type), entry.id or 0, shortName, activeTag)
 
-                -- 右键复制完整信息
-                if GUI:IsItemClicked(1) then
-                    CopyToClipboard(BuildEntrySummary(entry))
-                end
+                    GUI:TextColored(col[1], col[2], col[3], col[4], label)
 
-                -- 悬停提示
-                if GUI:IsItemHovered() then
-                    GUI:SetTooltip(entry.path .. "\n左键展开详情 | 右键复制完整信息")
-                end
+                    -- 左键展开/收起详情
+                    if GUI:IsItemClicked(0) then
+                        if State.selectedIndex == entry.index then
+                            State.selectedIndex = -1
+                        else
+                            State.selectedIndex = entry.index
+                        end
+                    end
 
-                -- 展开详情
-                if State.selectedIndex == entry.index then
-                    GUI:Indent(16)
-                    DrawDetailPanel(entry)
-                    GUI:Unindent(16)
+                    -- 右键复制完整信息
+                    if GUI:IsItemClicked(1) then
+                        CopyToClipboard(BuildEntrySummary(entry))
+                    end
+
+                    -- 悬停提示
+                    if GUI:IsItemHovered() then
+                        GUI:SetTooltip(entry.path .. "\n左键展开详情 | 右键复制完整信息")
+                    end
+
+                    -- 展开详情
+                    if State.selectedIndex == entry.index then
+                        GUI:Indent(16)
+                        DrawDetailPanel(entry)
+                        GUI:Unindent(16)
+                    end
                 end
             end
         end
