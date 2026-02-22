@@ -506,13 +506,42 @@ M.DrawMapEffectUI = function()
                         string.format("[%d] Index:%d  A2:%d  Flags:%d", ri, re.index, re.a2, re.flags))
                     GUI:SameLine()
                     if GUI:Button("停止##running" .. ri) then
-                        -- 尝试通过 flag 找到 script index 并停止
-                        if Argus.getEffectResourceScriptIndexForFlag and Argus.getMapEffectResource then
-                            local scriptIdx = Argus.getEffectResourceScriptIndexForFlag(re.flags)
-                            local res = Argus.getMapEffectResource(re.index)
-                            if res and scriptIdx and Argus.stopEffectResourceScript then
-                                Argus.stopEffectResourceScript(res, scriptIdx)
-                                d("[MapEffect] 已停止特效: Index=" .. re.index .. " ScriptIdx=" .. tostring(scriptIdx))
+                        -- runMapEffect 触发的特效不受 stopEffectResourceScript 控制
+                        -- 需要找到对应的 _off 脚本并通过 runMapEffect 或 startEffectResourceScript 执行
+                        d("[MapEffect] 尝试停止特效 Index=" .. re.index .. " Flags=" .. re.flags)
+                        local res = Argus.getMapEffectResource(re.index)
+                        if res then
+                            local _, _, resType, _ = Argus.getEffectResourceInfo(res)
+                            local stopped = false
+
+                            if resType == 6 then
+                                local numScripts = Argus.getNumEffectResourceScripts(res)
+                                -- 策略1: 找 _off 脚本并启动它来关闭特效
+                                for si = 0, numScripts - 1 do
+                                    local sName, _, _, _ = Argus.getEffectResourceScriptInfo(res, si)
+                                    if sName and string.find(sName, "_off") then
+                                        d("[MapEffect] 找到 off 脚本: [" .. si .. "] " .. sName .. "，尝试启动")
+                                        -- 方式A: 通过 startEffectResourceScript 直接启动 off 脚本
+                                        local result = Argus.startEffectResourceScript(res, si, 0)
+                                        d("[MapEffect]   startEffectResourceScript 结果: " .. tostring(result))
+                                        -- 方式B: 获取该脚本的 flag 并通过 runMapEffect 执行
+                                        local offFlag = Argus.getEffectResourceScriptFlagForIndex(re.index)
+                                        -- flag 是按 index 对应的，尝试用脚本 index 转换
+                                        d("[MapEffect]   off 脚本 index=" .. si)
+                                        stopped = true
+                                    end
+                                end
+
+                                -- 策略2: 如果没找到 _off，尝试停止所有正在运行的脚本
+                                if not stopped then
+                                    for si = 0, numScripts - 1 do
+                                        local sName, _, _, isRunning = Argus.getEffectResourceScriptInfo(res, si)
+                                        d("[MapEffect]   Script[" .. si .. "]: " .. tostring(sName) .. " running=" .. tostring(isRunning))
+                                        -- 无论 isRunning 状态，都尝试 stop
+                                        Argus.stopEffectResourceScript(res, si)
+                                    end
+                                    d("[MapEffect] 已尝试停止所有脚本")
+                                end
                             end
                         end
                         table.insert(toRemove, ri)
