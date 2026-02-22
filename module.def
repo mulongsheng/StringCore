@@ -2,5 +2,5 @@
 Name=StringCore
 Dependencies=minionlib,TensorCore
 Version=1
-Files=LuaFiles\\StringGuide.lua,LuaFiles\\Mitigation.lua,LuaFiles\\MainUI.lua,LuaFiles\\MitigationUI.lua,StringCore.lua
+Files=LuaFiles\\StringGuide.lua,LuaFiles\\Mitigation.lua,LuaFiles\\MainUI.lua,LuaFiles\\MitigationUI.lua,LuaFiles\\MapEffectUI.lua,StringCore.lua
 Enabled=1
