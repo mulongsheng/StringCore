@@ -76,6 +76,7 @@ local State = {
     timeout = 5000,
     posX = 0, posY = 0, posZ = 0,
     usePlayerPos = true,
+    usePlayerHeading = true,  -- 默认使用玩家朝向
 
     -- 形状参数
     radius = 5,
@@ -150,10 +151,15 @@ local function GetCurrentShape()
 end
 
 local function SyncPlayerPos()
-    if State.usePlayerPos and Player and Player.pos then
-        State.posX = Player.pos.x
-        State.posY = Player.pos.y
-        State.posZ = Player.pos.z
+    if Player and Player.pos then
+        if State.usePlayerPos then
+            State.posX = Player.pos.x
+            State.posY = Player.pos.y
+            State.posZ = Player.pos.z
+        end
+        if State.usePlayerHeading and Player.pos.h then
+            State.heading = math.deg(Player.pos.h)
+        end
     end
 end
 
@@ -421,13 +427,23 @@ local function ExecutePreview()
     if State.useMoogleDrawer and TensorCore and TensorCore.getMoogleDrawer then
         drawer = TensorCore.getMoogleDrawer()
     else
-        local fillU32 = GUI:ColorConvertFloat4ToU32(State.fillR, State.fillG, State.fillB, State.fillA)
-        local outlineU32 = GUI:ColorConvertFloat4ToU32(State.outlineR, State.outlineG, State.outlineB, State.outlineA)
+        -- 防御 nil 值
+        local fR = State.fillR or 0.8
+        local fG = State.fillG or 0.0
+        local fB = State.fillB or 1.0
+        local fA = State.fillA or 0.5
+        local oR = State.outlineR or 1.0
+        local oG = State.outlineG or 1.0
+        local oB = State.outlineB or 1.0
+        local oA = State.outlineA or 1.0
+
+        local fillU32 = GUI:ColorConvertFloat4ToU32(fR, fG, fB, fA)
+        local outlineU32 = GUI:ColorConvertFloat4ToU32(oR, oG, oB, oA)
 
         local startU32, midU32
         if State.useGradient then
-            startU32 = GUI:ColorConvertFloat4ToU32(State.startR, State.startG, State.startB, State.startA)
-            midU32 = GUI:ColorConvertFloat4ToU32(State.midR, State.midG, State.midB, State.midA)
+            startU32 = GUI:ColorConvertFloat4ToU32(State.startR or 1, State.startG or 0, State.startB or 0, State.startA or 0.5)
+            midU32 = GUI:ColorConvertFloat4ToU32(State.midR or 0.5, State.midG or 0, State.midB or 1, State.midA or 0.5)
         else
             startU32 = fillU32
         end
@@ -437,7 +453,7 @@ local function ExecutePreview()
             midU32,
             fillU32,
             outlineU32,
-            State.outlineThickness
+            State.outlineThickness or 1.5
         )
     end
 
@@ -510,14 +526,38 @@ end
 -- 绘制颜色选择器区域
 -- =============================================
 local function DrawColorPicker(label, rKey, gKey, bKey, aKey)
-    GUI:Text(label .. ":")
-    GUI:PushItemWidth(180)
-    State[rKey] = GUI:SliderFloat("R##" .. label, State[rKey], 0, 1)
+    -- 防御 nil 值
+    if not State[rKey] then State[rKey] = 0.5 end
+    if not State[gKey] then State[gKey] = 0.5 end
+    if not State[bKey] then State[bKey] = 0.5 end
+    if not State[aKey] then State[aKey] = 1.0 end
+
+    local flags = (GUI.ColorEditMode_NoInputs or 0) + (GUI.ColorEditMode_AlphaBar or 0)
+    
+    -- 注意：不要要在 label 里拼接动态变化的数值！否则拖拽时数值一变，控件 ID 就变了，会导致鼠标瞬间丢失焦点无法拖拽。
+    local r, g, b, a, changed = GUI:ColorEdit4(
+        label .. "##Color" .. rKey, 
+        State[rKey], State[gKey], State[bKey], State[aKey], 
+        flags
+    )
+    
+    GUI:SameLine()
+    GUI:TextColored(0.7, 0.7, 0.7, 1.0, string.format("(%.0f, %.0f, %.0f)", State[rKey]*255, State[gKey]*255, State[bKey]*255))
+    
+    if changed then
+        State[rKey] = r
+        State[gKey] = g
+        State[bKey] = b
+        State[aKey] = a
+    end
+
+    GUI:PushItemWidth(120)
+    State[rKey] = GUI:SliderFloat("R##" .. rKey, State[rKey], 0, 1)
     GUI:SameLine(0, 5)
-    State[gKey] = GUI:SliderFloat("G##" .. label, State[gKey], 0, 1)
-    State[bKey] = GUI:SliderFloat("B##" .. label, State[bKey], 0, 1)
+    State[gKey] = GUI:SliderFloat("G##" .. rKey, State[gKey], 0, 1)
+    State[bKey] = GUI:SliderFloat("B##" .. rKey, State[bKey], 0, 1)
     GUI:SameLine(0, 5)
-    State[aKey] = GUI:SliderFloat("A##" .. label, State[aKey], 0, 1)
+    State[aKey] = GUI:SliderFloat("A##" .. rKey, State[aKey], 0, 1)
     GUI:PopItemWidth()
 end
 
@@ -528,9 +568,9 @@ local function DrawPresetButtons(rKey, gKey, bKey, aKey)
     for i, preset in ipairs(PresetColors) do
         if i > 1 then GUI:SameLine(0, 3) end
         -- 用颜色来渲染按钮文字
-        GUI:PushStyleColor(GUI.StyleColor_Button, preset.r * 0.6, preset.g * 0.6, preset.b * 0.6, 0.8)
-        GUI:PushStyleColor(GUI.StyleColor_ButtonHovered, preset.r * 0.8, preset.g * 0.8, preset.b * 0.8, 0.9)
-        GUI:PushStyleColor(GUI.StyleColor_ButtonActive, preset.r, preset.g, preset.b, 1.0)
+        GUI:PushStyleColor(GUI.Col_Button, preset.r * 0.6, preset.g * 0.6, preset.b * 0.6, 0.8)
+        GUI:PushStyleColor(GUI.Col_ButtonHovered, preset.r * 0.8, preset.g * 0.8, preset.b * 0.8, 0.9)
+        GUI:PushStyleColor(GUI.Col_ButtonActive, preset.r, preset.g, preset.b, 1.0)
         if GUI:Button(preset.name .. "##" .. rKey, 0, 20) then
             State[rKey] = preset.r
             State[gKey] = preset.g
@@ -678,16 +718,13 @@ M.DrawArgusBuilderUI = function()
         elseif sid == "Cone" then
             State.radius = GUI:SliderFloat("半径##ArgusR", State.radius, 0.5, 50)
             State.angle = GUI:SliderFloat("扇形角度 (度)##ArgusAngle", State.angle, 1, 360)
-            State.heading = GUI:SliderFloat("朝向 (度)##ArgusHeading", State.heading, -180, 180)
             GUI:TextColored(C.hint[1], C.hint[2], C.hint[3], C.hint[4], "  提示: 角度为扇形的半角宽度")
         elseif sid == "Rect" then
             State.length = GUI:SliderFloat("长度##ArgusLen", State.length, 0.5, 60)
             State.width = GUI:SliderFloat("宽度##ArgusWid", State.width, 0.5, 30)
-            State.heading = GUI:SliderFloat("朝向 (度)##ArgusHeading", State.heading, -180, 180)
         elseif sid == "CenteredRect" then
             State.length = GUI:SliderFloat("长度##ArgusLen", State.length, 0.5, 60)
             State.width = GUI:SliderFloat("宽度##ArgusWid", State.width, 0.5, 30)
-            State.heading = GUI:SliderFloat("朝向 (度)##ArgusHeading", State.heading, -180, 180)
             GUI:TextColored(C.hint[1], C.hint[2], C.hint[3], C.hint[4], "  提示: 与普通矩形不同，居中矩形以中心为原点")
         elseif sid == "Donut" then
             State.radiusInner = GUI:SliderFloat("内径##ArgusRI", State.radiusInner, 0.5, 40)
@@ -699,26 +736,38 @@ M.DrawArgusBuilderUI = function()
             State.radiusInner = GUI:SliderFloat("内径##ArgusRI", State.radiusInner, 0.5, 40)
             State.radiusOuter = GUI:SliderFloat("外径##ArgusRO", State.radiusOuter, 1, 50)
             State.angle = GUI:SliderFloat("扇形角度 (度)##ArgusAngle", State.angle, 1, 360)
-            State.heading = GUI:SliderFloat("朝向 (度)##ArgusHeading", State.heading, -180, 180)
             if State.radiusOuter <= State.radiusInner then
                 State.radiusOuter = State.radiusInner + 1
             end
         elseif sid == "Cross" then
             State.length = GUI:SliderFloat("长度##ArgusLen", State.length, 0.5, 60)
             State.width = GUI:SliderFloat("宽度##ArgusWid", State.width, 0.5, 15)
-            State.heading = GUI:SliderFloat("朝向 (度)##ArgusHeading", State.heading, -180, 180)
         elseif sid == "Arrow" then
             State.baseLength = GUI:SliderFloat("箭身长度##ArgusBL", State.baseLength, 0.5, 30)
             State.baseWidth = GUI:SliderFloat("箭身宽度##ArgusBW", State.baseWidth, 0.5, 15)
             State.tipLength = GUI:SliderFloat("箭头长度##ArgusTL", State.tipLength, 0.5, 15)
             State.tipWidth = GUI:SliderFloat("箭头宽度##ArgusTW", State.tipWidth, 0.5, 10)
-            State.heading = GUI:SliderFloat("朝向 (度)##ArgusHeading", State.heading, -180, 180)
         elseif sid == "Chevron" then
             State.length = GUI:SliderFloat("长度##ArgusLen", State.length, 0.5, 30)
             State.thickness = GUI:SliderFloat("厚度##ArgusThick", State.thickness, 0.5, 10)
-            State.heading = GUI:SliderFloat("朝向 (度)##ArgusHeading", State.heading, -180, 180)
         elseif sid == "Line" then
             State.thickness = GUI:SliderFloat("线条粗细##ArgusThick", State.thickness, 0.5, 10)
+        end
+
+        -- 朝向设置（Circle, Donut, Line 不需要朝向）
+        local needsHeading = (sid == "Cone" or sid == "Rect" or sid == "CenteredRect"
+            or sid == "DonutCone" or sid == "Cross" or sid == "Arrow" or sid == "Chevron")
+        if needsHeading then
+            GUI:Spacing()
+            State.usePlayerHeading = GUI:Checkbox("使用玩家朝向##ArgusPlayerH", State.usePlayerHeading)
+            if State.usePlayerHeading then
+                SyncPlayerPos()
+                GUI:SameLine(0, 10)
+                GUI:TextColored(C.hint[1], C.hint[2], C.hint[3], C.hint[4],
+                    string.format("朝向: %.1f", State.heading))
+            else
+                State.heading = GUI:SliderFloat("朝向 (度)##ArgusHeading", State.heading, -180, 180)
+            end
         end
 
         GUI:PopItemWidth()
@@ -832,9 +881,9 @@ M.DrawArgusBuilderUI = function()
         GUI:Spacing()
 
         -- 生成代码按钮
-        GUI:PushStyleColor(GUI.StyleColor_Button, 0.2, 0.5, 0.8, 0.9)
-        GUI:PushStyleColor(GUI.StyleColor_ButtonHovered, 0.3, 0.6, 0.9, 1.0)
-        GUI:PushStyleColor(GUI.StyleColor_ButtonActive, 0.15, 0.4, 0.7, 1.0)
+        GUI:PushStyleColor(GUI.Col_Button, 0.2, 0.5, 0.8, 0.9)
+        GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.3, 0.6, 0.9, 1.0)
+        GUI:PushStyleColor(GUI.Col_ButtonActive, 0.15, 0.4, 0.7, 1.0)
         if GUI:Button("生成代码##ArgusGen", 100, 30) then
             SyncPlayerPos()
             GenerateCode()
@@ -845,9 +894,9 @@ M.DrawArgusBuilderUI = function()
         GUI:SameLine(0, 8)
 
         -- 复制代码按钮
-        GUI:PushStyleColor(GUI.StyleColor_Button, 0.2, 0.7, 0.3, 0.9)
-        GUI:PushStyleColor(GUI.StyleColor_ButtonHovered, 0.3, 0.8, 0.4, 1.0)
-        GUI:PushStyleColor(GUI.StyleColor_ButtonActive, 0.15, 0.6, 0.25, 1.0)
+        GUI:PushStyleColor(GUI.Col_Button, 0.2, 0.7, 0.3, 0.9)
+        GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.3, 0.8, 0.4, 1.0)
+        GUI:PushStyleColor(GUI.Col_ButtonActive, 0.15, 0.6, 0.25, 1.0)
         if GUI:Button("复制代码##ArgusCopy", 100, 30) then
             if State.generatedCode == "" then
                 SyncPlayerPos()
@@ -860,9 +909,9 @@ M.DrawArgusBuilderUI = function()
         GUI:SameLine(0, 8)
 
         -- 预览按钮
-        GUI:PushStyleColor(GUI.StyleColor_Button, 0.7, 0.5, 0.1, 0.9)
-        GUI:PushStyleColor(GUI.StyleColor_ButtonHovered, 0.8, 0.6, 0.2, 1.0)
-        GUI:PushStyleColor(GUI.StyleColor_ButtonActive, 0.6, 0.4, 0.05, 1.0)
+        GUI:PushStyleColor(GUI.Col_Button, 0.7, 0.5, 0.1, 0.9)
+        GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.8, 0.6, 0.2, 1.0)
+        GUI:PushStyleColor(GUI.Col_ButtonActive, 0.6, 0.4, 0.05, 1.0)
         if GUI:Button("预览绘图##ArgusPreview", 100, 30) then
             SyncPlayerPos()
             ExecutePreview()
@@ -872,9 +921,9 @@ M.DrawArgusBuilderUI = function()
         GUI:SameLine(0, 8)
 
         -- 清除预览按钮
-        GUI:PushStyleColor(GUI.StyleColor_Button, 0.7, 0.2, 0.2, 0.9)
-        GUI:PushStyleColor(GUI.StyleColor_ButtonHovered, 0.8, 0.3, 0.3, 1.0)
-        GUI:PushStyleColor(GUI.StyleColor_ButtonActive, 0.6, 0.15, 0.15, 1.0)
+        GUI:PushStyleColor(GUI.Col_Button, 0.7, 0.2, 0.2, 0.9)
+        GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.8, 0.3, 0.3, 1.0)
+        GUI:PushStyleColor(GUI.Col_ButtonActive, 0.6, 0.15, 0.15, 1.0)
         if GUI:Button("清除##ArgusClear", 70, 30) then
             for _, uuid in ipairs(State.previewUUIDs) do
                 if Argus and Argus.deleteTimedShape then
@@ -904,7 +953,7 @@ M.DrawArgusBuilderUI = function()
 
         if State.generatedCode ~= "" then
             -- 代码展示区
-            GUI:PushStyleColor(GUI.StyleColor_FrameBg, 0.1, 0.1, 0.15, 0.95)
+            GUI:PushStyleColor(GUI.Col_FrameBg, 0.1, 0.1, 0.15, 0.95)
             GUI:PushItemWidth(-1)  -- 填满宽度
 
             -- 计算文本行数来设置高度
