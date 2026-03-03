@@ -76,6 +76,7 @@ local State = {
     timeout = 5000,
     posX = 0, posY = 0, posZ = 0,
     usePlayerPos = true,
+    followPlayerPos = false,    -- 生成代码用 Player.pos.x/y/z
     usePlayerHeading = true,  -- 默认使用玩家朝向
 
     -- 形状参数
@@ -124,6 +125,7 @@ local State = {
     useGradient = false,
     startR = 1.0, startG = 0.0, startB = 0.0, startA = 0.5,
     midR = 0.5, midG = 0.0, midB = 1.0, midA = 0.5,
+    endR = 0.8, endG = 0.0, endB = 1.0, endA = 0.5,
 
     -- 生成的代码
     generatedCode = "",
@@ -133,6 +135,15 @@ local State = {
 
     -- 日志
     lastLog = "",
+
+    -- 组合机制
+    comboMode = 1,          -- 1=循环前进, 2=顺序执行, 3=同时执行
+    comboSteps = {},        -- 步骤列表（顺序/同时模式）
+    loopCount = 5,          -- 循环次数
+    loopStepDist = 3,       -- 步进距离(米)
+    loopInterval = 500,     -- 间隔延迟(毫秒)
+    loopShapeIndex = 1,     -- 循环使用的形状索引
+    comboGeneratedCode = "",
 }
 
 -- =============================================
@@ -194,14 +205,26 @@ local function GenerateCode()
 
     -- 坐标变量
     if not isOnEnt then
-        if sid == "Line" then
-            table.insert(lines, string.format("local x1, y1, z1 = %s, %s, %s",
-                FormatNum(State.posX), FormatNum(State.posY), FormatNum(State.posZ)))
-            table.insert(lines, string.format("local x2, y2, z2 = %s, %s, %s",
-                FormatNum(State.pos2X), FormatNum(State.pos2Y), FormatNum(State.pos2Z)))
+        if State.followPlayerPos then
+            -- 使用玩家动态位置
+            if sid == "Line" then
+                table.insert(lines, "local x1, y1, z1 = Player.pos.x, Player.pos.y, Player.pos.z")
+                table.insert(lines, string.format("local x2, y2, z2 = %s, %s, %s",
+                    FormatNum(State.pos2X), FormatNum(State.pos2Y), FormatNum(State.pos2Z)))
+            else
+                table.insert(lines, "local x, y, z = Player.pos.x, Player.pos.y, Player.pos.z")
+            end
         else
-            table.insert(lines, string.format("local x, y, z = %s, %s, %s",
-                FormatNum(State.posX), FormatNum(State.posY), FormatNum(State.posZ)))
+            -- 使用固定坐标
+            if sid == "Line" then
+                table.insert(lines, string.format("local x1, y1, z1 = %s, %s, %s",
+                    FormatNum(State.posX), FormatNum(State.posY), FormatNum(State.posZ)))
+                table.insert(lines, string.format("local x2, y2, z2 = %s, %s, %s",
+                    FormatNum(State.pos2X), FormatNum(State.pos2Y), FormatNum(State.pos2Z)))
+            else
+                table.insert(lines, string.format("local x, y, z = %s, %s, %s",
+                    FormatNum(State.posX), FormatNum(State.posY), FormatNum(State.posZ)))
+            end
         end
         table.insert(lines, "")
     end
@@ -210,7 +233,11 @@ local function GenerateCode()
     local needsHeading = (sid == "Cone" or sid == "Rect" or sid == "CenteredRect"
         or sid == "DonutCone" or sid == "Cross" or sid == "Arrow" or sid == "Chevron")
     if needsHeading and not isOnEnt then
-        table.insert(lines, string.format("local heading = math.rad(%s)  -- %s°", FormatNum(State.heading), FormatNum(State.heading)))
+        if State.usePlayerHeading then
+            table.insert(lines, "local heading = Player.pos.h")
+        else
+            table.insert(lines, string.format("local heading = math.rad(%s)  -- %s°", FormatNum(State.heading), FormatNum(State.heading)))
+        end
         table.insert(lines, "")
     end
 
@@ -228,13 +255,13 @@ local function GenerateCode()
             table.insert(lines, "-- 使用 TensorCore 默认配色")
             table.insert(lines, "local drawer = TensorCore.getMoogleDrawer()")
         elseif State.useGradient then
-            local fillColor = FormatColor(State.fillR, State.fillG, State.fillB, State.fillA)
             local outlineColor = FormatColor(State.outlineR, State.outlineG, State.outlineB, State.outlineA)
             local startColor = FormatColor(State.startR, State.startG, State.startB, State.startA)
             local midColor = FormatColor(State.midR, State.midG, State.midB, State.midA)
+            local endColor = FormatColor(State.endR, State.endG, State.endB, State.endA)
             table.insert(lines, "-- 创建渐变色绘图器")
             table.insert(lines, string.format("local drawer = Argus2.ShapeDrawer:new(\n    %s,  -- 起始颜色\n    %s,  -- 中间颜色\n    %s,  -- 结束颜色\n    %s,  -- 描边颜色\n    %s  -- 描边粗细\n)",
-                startColor, midColor, fillColor, outlineColor, FormatNum(State.outlineThickness)))
+                startColor, midColor, endColor, outlineColor, FormatNum(State.outlineThickness)))
         else
             local fillColor = FormatColor(State.fillR, State.fillG, State.fillB, State.fillA)
             local outlineColor = FormatColor(State.outlineR, State.outlineG, State.outlineB, State.outlineA)
@@ -444,6 +471,7 @@ local function ExecutePreview()
         if State.useGradient then
             startU32 = GUI:ColorConvertFloat4ToU32(State.startR or 1, State.startG or 0, State.startB or 0, State.startA or 0.5)
             midU32 = GUI:ColorConvertFloat4ToU32(State.midR or 0.5, State.midG or 0, State.midB or 1, State.midA or 0.5)
+            fillU32 = GUI:ColorConvertFloat4ToU32(State.endR or 0.8, State.endG or 0, State.endB or 1, State.endA or 0.5)
         else
             startU32 = fillU32
         end
@@ -587,6 +615,301 @@ local function DrawPresetButtons(rKey, gKey, bKey, aKey)
 end
 
 -- =============================================
+-- 组合机制：模式名称
+-- =============================================
+local ComboModeNames = { "循环前进 (地火)", "顺序执行 (先后)", "同时执行 (并发)" }
+
+-- =============================================
+-- 快照当前形状参数为一个步骤
+-- =============================================
+local function SnapshotCurrentStep(stepDelay)
+    local shape = GetCurrentShape()
+    if not shape then return nil end
+    local step = {
+        shapeIndex = State.shapeIndex,
+        shapeName  = shape.name,
+        shapeId    = shape.id,
+        delay      = stepDelay or 0,
+        -- 复用当前参数
+        radius      = State.radius,
+        radiusInner = State.radiusInner,
+        radiusOuter = State.radiusOuter,
+        length      = State.length,
+        width       = State.width,
+        angle       = State.angle,
+        heading     = State.heading,
+        thickness   = State.thickness,
+        baseLength  = State.baseLength,
+        baseWidth   = State.baseWidth,
+        tipLength   = State.tipLength,
+        tipWidth    = State.tipWidth,
+    }
+    return step
+end
+
+-- =============================================
+-- 生成单个形状的绘图调用字符串
+-- =============================================
+local function GenerateShapeCall(step, posVar, headingVar, delayVal)
+    local sid = step.shapeId
+    local del = FormatNum(delayVal)
+
+    if sid == "Circle" then
+        return string.format("drawer:addTimedCircle(timeout, %s, %s, %s)",
+            posVar, FormatNum(step.radius), del)
+    elseif sid == "Cone" then
+        return string.format("drawer:addTimedCone(timeout, %s, %s, math.rad(%s), %s, %s)",
+            posVar, FormatNum(step.radius), FormatNum(step.angle), headingVar, del)
+    elseif sid == "Rect" then
+        return string.format("drawer:addTimedRect(timeout, %s, %s, %s, %s, %s)",
+            posVar, FormatNum(step.length), FormatNum(step.width), headingVar, del)
+    elseif sid == "CenteredRect" then
+        return string.format("drawer:addTimedCenteredRect(timeout, %s, %s, %s, %s, %s)",
+            posVar, FormatNum(step.length), FormatNum(step.width), headingVar, del)
+    elseif sid == "Donut" then
+        return string.format("drawer:addTimedDonut(timeout, %s, %s, %s, %s)",
+            posVar, FormatNum(step.radiusInner), FormatNum(step.radiusOuter), del)
+    elseif sid == "DonutCone" then
+        return string.format("drawer:addTimedDonutCone(timeout, %s, %s, %s, math.rad(%s), %s, %s)",
+            posVar, FormatNum(step.radiusInner), FormatNum(step.radiusOuter),
+            FormatNum(step.angle), headingVar, del)
+    elseif sid == "Cross" then
+        return string.format("drawer:addTimedCross(timeout, %s, %s, %s, %s, %s)",
+            posVar, FormatNum(step.length), FormatNum(step.width), headingVar, del)
+    elseif sid == "Arrow" then
+        return string.format("drawer:addTimedArrow(timeout, %s, %s, %s, %s, %s, %s, %s)",
+            posVar, headingVar, FormatNum(step.baseLength), FormatNum(step.baseWidth),
+            FormatNum(step.tipLength), FormatNum(step.tipWidth), del)
+    elseif sid == "Chevron" then
+        return string.format("drawer:addTimedChevron(timeout, %s, %s, %s, %s, %s)",
+            posVar, FormatNum(step.length), FormatNum(step.thickness), headingVar, del)
+    end
+    return "-- 不支持的形状: " .. sid
+end
+
+-- =============================================
+-- 组合机制代码生成
+-- =============================================
+local function GenerateComboCode()
+    local lines = {}
+    local mode = State.comboMode
+
+    table.insert(lines, "-- 组合机制代码 (由 StringCore 代码生成器生成)")
+
+    -- 坐标和 drawer
+    if State.followPlayerPos then
+        table.insert(lines, "local x, y, z = Player.pos.x, Player.pos.y, Player.pos.z")
+    else
+        if Player and Player.pos then SyncPlayerPos() end
+        table.insert(lines, string.format("local x, y, z = %s, %s, %s",
+            FormatNum(State.posX), FormatNum(State.posY), FormatNum(State.posZ)))
+    end
+    if State.usePlayerHeading then
+        table.insert(lines, "local heading = Player.pos.h")
+    else
+        table.insert(lines, string.format("local heading = math.rad(%s)", FormatNum(State.heading)))
+    end
+    table.insert(lines, string.format("local timeout = %s", FormatNum(State.timeout)))
+    table.insert(lines, "")
+
+    if State.useMoogleDrawer then
+        table.insert(lines, "local drawer = TensorCore.getMoogleDrawer()")
+    else
+        table.insert(lines, "-- 创建绘图器 (请根据需要调整颜色)")
+        if State.useGradient then
+            table.insert(lines, string.format("local drawer = Argus2.ShapeDrawer:new(%s, %s, %s, %s, %s)",
+                FormatColor(State.startR, State.startG, State.startB, State.startA),
+                FormatColor(State.midR, State.midG, State.midB, State.midA),
+                FormatColor(State.endR, State.endG, State.endB, State.endA),
+                FormatColor(State.outlineR, State.outlineG, State.outlineB, State.outlineA),
+                FormatNum(State.outlineThickness)))
+        else
+            table.insert(lines, string.format("local drawer = Argus2.ShapeDrawer:new(nil, nil, %s, %s, %s)",
+                FormatColor(State.fillR, State.fillG, State.fillB, State.fillA),
+                FormatColor(State.outlineR, State.outlineG, State.outlineB, State.outlineA),
+                FormatNum(State.outlineThickness)))
+        end
+    end
+    table.insert(lines, "")
+
+    if mode == 1 then
+        -- === 循环前进 (地火) ===
+        local loopShape = ShapeDefinitions[State.loopShapeIndex]
+        if not loopShape then
+            State.comboGeneratedCode = "-- 错误: 无效的形状索引"
+            return
+        end
+        local step = {
+            shapeId     = loopShape.id,
+            shapeName   = loopShape.name,
+            radius      = State.radius,
+            radiusInner = State.radiusInner,
+            radiusOuter = State.radiusOuter,
+            length      = State.length,
+            width       = State.width,
+            angle       = State.angle,
+            heading     = State.heading,
+            thickness   = State.thickness,
+            baseLength  = State.baseLength,
+            baseWidth   = State.baseWidth,
+            tipLength   = State.tipLength,
+            tipWidth    = State.tipWidth,
+        }
+
+        table.insert(lines, string.format("-- 循环前进 (地火): %s × %d  步进 %s米  间隔 %sms",
+            loopShape.name, State.loopCount, FormatNum(State.loopStepDist), FormatNum(State.loopInterval)))
+        table.insert(lines, string.format("for i = 0, %d do", State.loopCount - 1))
+        table.insert(lines, string.format("    local pos = TensorCore.getPosInDirection({x=x, y=y, z=z}, heading, i * %s)",
+            FormatNum(State.loopStepDist)))
+        local call = GenerateShapeCall(step, "pos.x, pos.y, pos.z", "heading", 0)
+        -- 替换 delay 0 为 i * interval
+        call = string.gsub(call, ", 0%)$", string.format(", i * %s)", FormatNum(State.loopInterval)))
+        table.insert(lines, "    " .. call)
+        table.insert(lines, "end")
+
+    elseif mode == 2 then
+        -- === 顺序执行 ===
+        if #State.comboSteps == 0 then
+            table.insert(lines, "-- 没有步骤，请先添加步骤")
+        else
+            table.insert(lines, "-- 顺序执行: " .. #State.comboSteps .. " 个步骤")
+            for i, step in ipairs(State.comboSteps) do
+                table.insert(lines, "")
+                table.insert(lines, string.format("-- 步骤 %d: %s (延迟 %dms)", i, step.shapeName, step.delay))
+                local headVar = "heading"
+                -- 如果步骤有独立朝向且不同于主朝向，使用步骤朝向
+                if step.heading ~= State.heading then
+                    headVar = string.format("math.rad(%s)", FormatNum(step.heading))
+                end
+                local call = GenerateShapeCall(step, "x, y, z", headVar, step.delay)
+                table.insert(lines, call)
+            end
+        end
+
+    elseif mode == 3 then
+        -- === 同时执行 ===
+        if #State.comboSteps == 0 then
+            table.insert(lines, "-- 没有步骤，请先添加步骤")
+        else
+            table.insert(lines, "-- 同时执行: " .. #State.comboSteps .. " 个步骤")
+            for i, step in ipairs(State.comboSteps) do
+                table.insert(lines, "")
+                table.insert(lines, string.format("-- 步骤 %d: %s", i, step.shapeName))
+                local headVar = "heading"
+                if step.heading ~= State.heading then
+                    headVar = string.format("math.rad(%s)", FormatNum(step.heading))
+                end
+                local call = GenerateShapeCall(step, "x, y, z", headVar, 0)
+                table.insert(lines, call)
+            end
+        end
+    end
+
+    table.insert(lines, "")
+    State.comboGeneratedCode = table.concat(lines, "\n")
+end
+
+-- =============================================
+-- 组合机制预览执行
+-- =============================================
+local function ExecuteComboPreview()
+    if not Argus2 or not Argus2.ShapeDrawer then
+        State.lastLog = "错误: Argus2 API 不可用"
+        return
+    end
+
+    SyncPlayerPos()
+
+    -- 清除之前的预览
+    for _, uuid in ipairs(State.previewUUIDs) do
+        if Argus and Argus.deleteTimedShape then
+            Argus.deleteTimedShape(uuid)
+        end
+    end
+    State.previewUUIDs = {}
+
+    -- 创建 drawer
+    local drawer
+    if State.useMoogleDrawer and TensorCore and TensorCore.getMoogleDrawer then
+        drawer = TensorCore.getMoogleDrawer()
+    else
+        local fR, fG, fB, fA = State.fillR or 0.8, State.fillG or 0, State.fillB or 1, State.fillA or 0.5
+        local oR, oG, oB, oA = State.outlineR or 1, State.outlineG or 1, State.outlineB or 1, State.outlineA or 1
+        local fillU32 = GUI:ColorConvertFloat4ToU32(fR, fG, fB, fA)
+        local outlineU32 = GUI:ColorConvertFloat4ToU32(oR, oG, oB, oA)
+        local startU32, midU32 = fillU32, nil
+        if State.useGradient then
+            startU32 = GUI:ColorConvertFloat4ToU32(State.startR or 1, State.startG or 0, State.startB or 0, State.startA or 0.5)
+            midU32 = GUI:ColorConvertFloat4ToU32(State.midR or 0.5, State.midG or 0, State.midB or 1, State.midA or 0.5)
+            fillU32 = GUI:ColorConvertFloat4ToU32(State.endR or 0.8, State.endG or 0, State.endB or 1, State.endA or 0.5)
+        end
+        drawer = Argus2.ShapeDrawer:new(startU32, midU32, fillU32, outlineU32, State.outlineThickness or 1.5)
+    end
+
+    local x, y, z = State.posX, State.posY, State.posZ
+    local headingRad = math.rad(State.heading)
+    local timeout = State.timeout
+    local mode = State.comboMode
+
+    -- 执行单个步骤的预览绘图
+    local function previewStep(step, px, py, pz, hRad, del)
+        local sid = step.shapeId
+        local angleRad = math.rad(step.angle or 90)
+        local uuid
+
+        if sid == "Circle" then
+            uuid = drawer:addTimedCircle(timeout, px, py, pz, step.radius, del)
+        elseif sid == "Cone" then
+            uuid = drawer:addTimedCone(timeout, px, py, pz, step.radius, angleRad, hRad, del)
+        elseif sid == "Rect" then
+            uuid = drawer:addTimedRect(timeout, px, py, pz, step.length, step.width, hRad, del)
+        elseif sid == "CenteredRect" then
+            uuid = drawer:addTimedCenteredRect(timeout, px, py, pz, step.length, step.width, hRad, del)
+        elseif sid == "Donut" then
+            uuid = drawer:addTimedDonut(timeout, px, py, pz, step.radiusInner, step.radiusOuter, del)
+        elseif sid == "DonutCone" then
+            uuid = drawer:addTimedDonutCone(timeout, px, py, pz, step.radiusInner, step.radiusOuter, angleRad, hRad, del)
+        elseif sid == "Cross" then
+            uuid = drawer:addTimedCross(timeout, px, py, pz, step.length, step.width, hRad, del)
+        elseif sid == "Arrow" then
+            uuid = drawer:addTimedArrow(timeout, px, py, pz, hRad, step.baseLength, step.baseWidth, step.tipLength, step.tipWidth, del)
+        elseif sid == "Chevron" then
+            uuid = drawer:addTimedChevron(timeout, px, py, pz, step.length, step.thickness, hRad, del)
+        end
+
+        if uuid then table.insert(State.previewUUIDs, uuid) end
+    end
+
+    if mode == 1 then
+        -- 循环前进
+        local loopShape = ShapeDefinitions[State.loopShapeIndex]
+        if loopShape and TensorCore and TensorCore.getPosInDirection then
+            local step = {
+                shapeId = loopShape.id, radius = State.radius,
+                radiusInner = State.radiusInner, radiusOuter = State.radiusOuter,
+                length = State.length, width = State.width, angle = State.angle,
+                thickness = State.thickness, baseLength = State.baseLength,
+                baseWidth = State.baseWidth, tipLength = State.tipLength, tipWidth = State.tipWidth,
+            }
+            for i = 0, State.loopCount - 1 do
+                local pos = TensorCore.getPosInDirection({x=x, y=y, z=z}, headingRad, i * State.loopStepDist)
+                previewStep(step, pos.x, pos.y, pos.z, headingRad, i * State.loopInterval)
+            end
+        end
+    else
+        -- 顺序 / 同时
+        for _, step in ipairs(State.comboSteps) do
+            local hRad = math.rad(step.heading or State.heading)
+            local del = (mode == 2) and step.delay or 0
+            previewStep(step, x, y, z, hRad, del)
+        end
+    end
+
+    State.lastLog = "组合机制预览已执行"
+    d("[ArgusBuilder] 组合机制预览")
+end
+
+-- =============================================
 -- 主绘制函数
 -- =============================================
 M.DrawArgusBuilderUI = function()
@@ -672,6 +995,11 @@ M.DrawArgusBuilderUI = function()
 
         if State.attachMode == 1 then
             State.usePlayerPos = GUI:Checkbox("使用玩家当前位置##ArgusPlayerPos", State.usePlayerPos)
+            GUI:SameLine(0, 10)
+            State.followPlayerPos = GUI:Checkbox("跟随玩家##ArgusFollowPos", State.followPlayerPos)
+            if GUI:IsItemHovered() then
+                GUI:SetTooltip("勾选后生成的代码使用 Player.pos.x/y/z 动态位置")
+            end
             if State.usePlayerPos then
                 SyncPlayerPos()
                 GUI:TextColored(C.hint[1], C.hint[2], C.hint[3], C.hint[4],
@@ -764,10 +1092,83 @@ M.DrawArgusBuilderUI = function()
                 SyncPlayerPos()
                 GUI:SameLine(0, 10)
                 GUI:TextColored(C.hint[1], C.hint[2], C.hint[3], C.hint[4],
-                    string.format("朝向: %.1f", State.heading))
+                    string.format("朝向: %.1f°", State.heading))
             else
                 State.heading = GUI:SliderFloat("朝向 (度)##ArgusHeading", State.heading, -180, 180)
             end
+
+            -- 快捷方向按钮 (基于玩家当前面向)
+            GUI:TextColored(C.hint[1], C.hint[2], C.hint[3], C.hint[4], "快捷方向:")
+            GUI:SameLine(0, 5)
+
+            local playerH = 0
+            if Player and Player.pos and Player.pos.h then
+                playerH = math.deg(Player.pos.h)
+            end
+
+            -- 归一化角度到 [-180, 180]
+            local function NormalizeAngle(deg)
+                while deg > 180 do deg = deg - 360 end
+                while deg < -180 do deg = deg + 360 end
+                return deg
+            end
+
+            GUI:PushStyleColor(GUI.Col_Button, 0.25, 0.55, 0.80, 0.85)
+            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.35, 0.65, 0.90, 0.95)
+            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.20, 0.45, 0.70, 1.0)
+            if GUI:Button("前##HDir", 30, 20) then
+                State.heading = NormalizeAngle(playerH)
+                State.usePlayerHeading = false
+            end
+            GUI:PopStyleColor(3)
+
+            GUI:SameLine(0, 3)
+            GUI:PushStyleColor(GUI.Col_Button, 0.25, 0.55, 0.80, 0.85)
+            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.35, 0.65, 0.90, 0.95)
+            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.20, 0.45, 0.70, 1.0)
+            if GUI:Button("后##HDir", 30, 20) then
+                State.heading = NormalizeAngle(playerH + 180)
+                State.usePlayerHeading = false
+            end
+            GUI:PopStyleColor(3)
+
+            GUI:SameLine(0, 3)
+            GUI:PushStyleColor(GUI.Col_Button, 0.25, 0.55, 0.80, 0.85)
+            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.35, 0.65, 0.90, 0.95)
+            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.20, 0.45, 0.70, 1.0)
+            if GUI:Button("左##HDir", 30, 20) then
+                State.heading = NormalizeAngle(playerH - 90)
+                State.usePlayerHeading = false
+            end
+            GUI:PopStyleColor(3)
+
+            GUI:SameLine(0, 3)
+            GUI:PushStyleColor(GUI.Col_Button, 0.25, 0.55, 0.80, 0.85)
+            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.35, 0.65, 0.90, 0.95)
+            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.20, 0.45, 0.70, 1.0)
+            if GUI:Button("右##HDir", 30, 20) then
+                State.heading = NormalizeAngle(playerH + 90)
+                State.usePlayerHeading = false
+            end
+            GUI:PopStyleColor(3)
+
+            -- 相对偏移输入 (正=右偏, 负=左偏)
+            GUI:SameLine(0, 10)
+            GUI:PushItemWidth(80)
+            State._headingOffset = State._headingOffset or 0
+            State._headingOffset = GUI:InputFloat("##HOffsetVal", State._headingOffset, 0, 0)
+            GUI:PopItemWidth()
+            GUI:SameLine(0, 3)
+            GUI:PushStyleColor(GUI.Col_Button, 0.55, 0.40, 0.75, 0.85)
+            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.65, 0.50, 0.85, 0.95)
+            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.45, 0.30, 0.65, 1.0)
+            if GUI:Button("偏移##HApply", 40, 20) then
+                State.heading = NormalizeAngle(playerH + State._headingOffset)
+                State.usePlayerHeading = false
+            end
+            GUI:PopStyleColor(3)
+            GUI:SameLine(0, 5)
+            GUI:TextColored(C.hint[1], C.hint[2], C.hint[3], C.hint[4], "(+右 -左)")
         end
 
         GUI:PopItemWidth()
@@ -790,25 +1191,11 @@ M.DrawArgusBuilderUI = function()
             if not State.useMoogleDrawer then
                 GUI:Spacing()
 
-                -- 填充颜色
-                GUI:TextColored(C.section[1], C.section[2], C.section[3], C.section[4], "填充颜色:")
-                DrawColorPicker("填充", "fillR", "fillG", "fillB", "fillA")
-                DrawPresetButtons("fillR", "fillG", "fillB", "fillA")
-
-                GUI:Spacing()
-
-                -- 描边颜色
-                GUI:TextColored(C.section[1], C.section[2], C.section[3], C.section[4], "描边颜色:")
-                DrawColorPicker("描边", "outlineR", "outlineG", "outlineB", "outlineA")
-                GUI:PushItemWidth(150)
-                State.outlineThickness = GUI:SliderFloat("描边粗细##ArgusOT", State.outlineThickness, 0.5, 5)
-                GUI:PopItemWidth()
-
-                GUI:Spacing()
-
-                -- 渐变色选项
+                -- 渐变色开关（填充色和渐变色互斥）
                 State.useGradient = GUI:Checkbox("启用渐变色##ArgusGrad", State.useGradient)
+
                 if State.useGradient then
+                    -- === 渐变色模式 ===
                     GUI:Indent(10)
                     GUI:TextColored(C.section[1], C.section[2], C.section[3], C.section[4], "起始颜色:")
                     DrawColorPicker("起始", "startR", "startG", "startB", "startA")
@@ -819,8 +1206,29 @@ M.DrawArgusBuilderUI = function()
                     GUI:TextColored(C.section[1], C.section[2], C.section[3], C.section[4], "中间颜色:")
                     DrawColorPicker("中间", "midR", "midG", "midB", "midA")
                     DrawPresetButtons("midR", "midG", "midB", "midA")
+
+                    GUI:Spacing()
+
+                    GUI:TextColored(C.section[1], C.section[2], C.section[3], C.section[4], "结束颜色:")
+                    DrawColorPicker("结束", "endR", "endG", "endB", "endA")
+                    DrawPresetButtons("endR", "endG", "endB", "endA")
                     GUI:Unindent(10)
+                else
+                    -- === 单一填充色模式 ===
+                    GUI:TextColored(C.section[1], C.section[2], C.section[3], C.section[4], "填充颜色:")
+                    DrawColorPicker("填充", "fillR", "fillG", "fillB", "fillA")
+                    DrawPresetButtons("fillR", "fillG", "fillB", "fillA")
                 end
+
+                GUI:Spacing()
+
+                -- 描边颜色（始终显示）
+                GUI:TextColored(C.section[1], C.section[2], C.section[3], C.section[4], "描边颜色:")
+                DrawColorPicker("描边", "outlineR", "outlineG", "outlineB", "outlineA")
+                DrawPresetButtons("outlineR", "outlineG", "outlineB", "outlineA")
+                GUI:PushItemWidth(150)
+                State.outlineThickness = GUI:SliderFloat("描边粗细##ArgusOT", State.outlineThickness, 0.5, 5)
+                GUI:PopItemWidth()
             else
                 GUI:TextColored(C.hint[1], C.hint[2], C.hint[3], C.hint[4], "  当前使用 TensorCore 预设蓝紫渐变配色")
             end
@@ -875,7 +1283,223 @@ M.DrawArgusBuilderUI = function()
         GUI:Spacing()
 
         -- =============================================
-        -- 7. 操作按钮
+        -- 7. 组合机制（折叠）
+        -- =============================================
+        if GUI:CollapsingHeader("组合机制##ArgusCombo") then
+            GUI:Indent(5)
+
+            -- 模式选择
+            GUI:PushItemWidth(200)
+            State.comboMode = GUI:Combo("组合模式##ArgusComboMode", State.comboMode, ComboModeNames)
+            GUI:PopItemWidth()
+
+            GUI:Spacing()
+
+            if State.comboMode == 1 then
+                -- === 循环前进 (地火) ===
+                GUI:TextColored(C.section[1], C.section[2], C.section[3], C.section[4], "循环前进参数:")
+                GUI:Spacing()
+
+                GUI:PushItemWidth(200)
+                State.loopShapeIndex = GUI:Combo("循环形状##ArgusLoopShape", State.loopShapeIndex, ShapeDisplayNames)
+                GUI:PopItemWidth()
+
+                GUI:PushItemWidth(150)
+                State.loopCount = GUI:SliderInt("循环次数##ArgusLoopCount", State.loopCount, 1, 20)
+                State.loopStepDist = GUI:SliderFloat("步进距离 (米)##ArgusLoopDist", State.loopStepDist, 0.5, 30)
+                State.loopInterval = GUI:InputInt("间隔延迟 (毫秒)##ArgusLoopInterval", State.loopInterval)
+                if State.loopInterval < 0 then State.loopInterval = 0 end
+                GUI:PopItemWidth()
+
+                GUI:Spacing()
+                GUI:TextColored(C.hint[1], C.hint[2], C.hint[3], C.hint[4],
+                    "  以当前位置和朝向为起点，沿朝向方向每隔指定距离绘制")
+                GUI:TextColored(C.hint[1], C.hint[2], C.hint[3], C.hint[4],
+                    "  形状参数使用上方「形状参数」区域的当前值")
+
+            else
+                -- === 顺序执行 / 同时执行 ===
+                local modeName = (State.comboMode == 2) and "顺序执行" or "同时执行"
+                GUI:TextColored(C.section[1], C.section[2], C.section[3], C.section[4], modeName .. " 步骤列表:")
+                GUI:Spacing()
+
+                -- 添加步骤按钮
+                GUI:PushStyleColor(GUI.Col_Button, 0.2, 0.6, 0.4, 0.9)
+                GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.3, 0.7, 0.5, 1.0)
+                GUI:PushStyleColor(GUI.Col_ButtonActive, 0.15, 0.5, 0.35, 1.0)
+                if GUI:Button("添加当前形状为步骤##ArgusComboAdd", 180, 24) then
+                    local step = SnapshotCurrentStep(0)
+                    if step then
+                        table.insert(State.comboSteps, step)
+                        State.lastLog = "已添加步骤: " .. step.shapeName
+                    end
+                end
+                GUI:PopStyleColor(3)
+
+                GUI:SameLine(0, 8)
+
+                -- 清空步骤按钮
+                GUI:PushStyleColor(GUI.Col_Button, 0.7, 0.2, 0.2, 0.9)
+                GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.8, 0.3, 0.3, 1.0)
+                GUI:PushStyleColor(GUI.Col_ButtonActive, 0.6, 0.15, 0.15, 1.0)
+                if GUI:Button("清空步骤##ArgusComboClear", 80, 24) then
+                    State.comboSteps = {}
+                    State.lastLog = "已清空所有步骤"
+                end
+                GUI:PopStyleColor(3)
+
+                GUI:Spacing()
+
+                -- 步骤列表显示
+                if #State.comboSteps == 0 then
+                    GUI:TextColored(C.muted[1], C.muted[2], C.muted[3], C.muted[4],
+                        "  还没有步骤。在上方设置好形状参数后点「添加当前形状为步骤」")
+                else
+                    local removeIdx = nil
+                    for i, step in ipairs(State.comboSteps) do
+                        -- 步骤摘要
+                        local summary = string.format("%d. %s", i, step.shapeName)
+                        local sid = step.shapeId
+                        if sid == "Circle" then
+                            summary = summary .. string.format(" R=%.1f", step.radius)
+                        elseif sid == "Cone" then
+                            summary = summary .. string.format(" R=%.1f A=%.0f°", step.radius, step.angle)
+                        elseif sid == "Rect" or sid == "CenteredRect" or sid == "Cross" then
+                            summary = summary .. string.format(" L=%.1f W=%.1f", step.length, step.width)
+                        elseif sid == "Donut" then
+                            summary = summary .. string.format(" Ri=%.1f Ro=%.1f", step.radiusInner, step.radiusOuter)
+                        elseif sid == "DonutCone" then
+                            summary = summary .. string.format(" Ri=%.1f Ro=%.1f A=%.0f°", step.radiusInner, step.radiusOuter, step.angle)
+                        end
+
+                        -- 顺序模式显示延迟
+                        if State.comboMode == 2 then
+                            summary = summary .. string.format("  延迟=%dms", step.delay)
+                        end
+
+                        -- 朝向如果不同于主朝向则显示
+                        if step.heading ~= State.heading then
+                            summary = summary .. string.format("  朝向=%.0f°", step.heading)
+                        end
+
+                        GUI:TextColored(C.white[1], C.white[2], C.white[3], C.white[4], "  " .. summary)
+
+                        -- 顺序模式：延迟编辑
+                        if State.comboMode == 2 then
+                            GUI:SameLine(0, 10)
+                            GUI:PushItemWidth(80)
+                            local newDelay = GUI:InputInt("##ComboDelay" .. i, step.delay)
+                            if newDelay ~= step.delay then
+                                step.delay = math.max(0, newDelay)
+                            end
+                            GUI:PopItemWidth()
+                        end
+
+                        -- 删除按钮
+                        GUI:SameLine(0, 5)
+                        GUI:PushStyleColor(GUI.Col_Button, 0.6, 0.15, 0.15, 0.8)
+                        GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.8, 0.2, 0.2, 0.9)
+                        GUI:PushStyleColor(GUI.Col_ButtonActive, 0.5, 0.1, 0.1, 1.0)
+                        if GUI:Button("删除##ComboRemove" .. i, 40, 18) then
+                            removeIdx = i
+                        end
+                        GUI:PopStyleColor(3)
+                    end
+
+                    if removeIdx then
+                        table.remove(State.comboSteps, removeIdx)
+                        State.lastLog = "已删除步骤 " .. removeIdx
+                    end
+                end
+            end
+
+            GUI:Spacing()
+            GUI:Separator()
+            GUI:Spacing()
+
+            -- 组合操作按钮
+            GUI:PushStyleColor(GUI.Col_Button, 0.2, 0.5, 0.8, 0.9)
+            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.3, 0.6, 0.9, 1.0)
+            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.15, 0.4, 0.7, 1.0)
+            if GUI:Button("生成组合代码##ArgusComboGen", 120, 28) then
+                SyncPlayerPos()
+                GenerateComboCode()
+                State.lastLog = "组合代码已生成"
+            end
+            GUI:PopStyleColor(3)
+
+            GUI:SameLine(0, 8)
+
+            GUI:PushStyleColor(GUI.Col_Button, 0.2, 0.7, 0.3, 0.9)
+            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.3, 0.8, 0.4, 1.0)
+            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.15, 0.6, 0.25, 1.0)
+            if GUI:Button("复制组合代码##ArgusComboCopy", 120, 28) then
+                if State.comboGeneratedCode == "" then
+                    SyncPlayerPos()
+                    GenerateComboCode()
+                end
+                CopyToClipboard(State.comboGeneratedCode)
+            end
+            GUI:PopStyleColor(3)
+
+            GUI:SameLine(0, 8)
+
+            GUI:PushStyleColor(GUI.Col_Button, 0.7, 0.5, 0.1, 0.9)
+            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.8, 0.6, 0.2, 1.0)
+            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.6, 0.4, 0.05, 1.0)
+            if GUI:Button("预览组合##ArgusComboPreview", 100, 28) then
+                SyncPlayerPos()
+                ExecuteComboPreview()
+            end
+            GUI:PopStyleColor(3)
+
+            GUI:SameLine(0, 8)
+
+            GUI:PushStyleColor(GUI.Col_Button, 0.7, 0.2, 0.2, 0.9)
+            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.8, 0.3, 0.3, 1.0)
+            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.6, 0.15, 0.15, 1.0)
+            if GUI:Button("清除预览##ArgusComboClearPrev", 90, 28) then
+                for _, uuid in ipairs(State.previewUUIDs) do
+                    if Argus and Argus.deleteTimedShape then
+                        Argus.deleteTimedShape(uuid)
+                    end
+                end
+                State.previewUUIDs = {}
+                State.lastLog = "已清除所有预览"
+            end
+            GUI:PopStyleColor(3)
+
+            -- 组合代码展示
+            if State.comboGeneratedCode ~= "" then
+                GUI:Spacing()
+                GUI:TextColored(C.title[1], C.title[2], C.title[3], C.title[4], "组合代码")
+                GUI:Spacing()
+
+                GUI:PushStyleColor(GUI.Col_FrameBg, 0.1, 0.1, 0.15, 0.95)
+                GUI:PushItemWidth(-1)
+
+                local lineCount = 1
+                for _ in string.gmatch(State.comboGeneratedCode, "\n") do
+                    lineCount = lineCount + 1
+                end
+                local textHeight = math.max(lineCount * 16 + 10, 100)
+                if textHeight > 300 then textHeight = 300 end
+
+                GUI:InputTextMultiline("##ArgusComboCodeOutput", State.comboGeneratedCode, -1, textHeight, GUI.InputTextFlags_ReadOnly)
+
+                GUI:PopItemWidth()
+                GUI:PopStyleColor(1)
+            end
+
+            GUI:Unindent(5)
+        end
+
+        GUI:Spacing()
+        GUI:Separator()
+        GUI:Spacing()
+
+        -- =============================================
+        -- 8. 操作按钮
         -- =============================================
         GUI:TextColored(C.title[1], C.title[2], C.title[3], C.title[4], "操作")
         GUI:Spacing()
@@ -999,7 +1623,7 @@ M.DrawArgusBuilderUI = function()
             GUI:TextColored(C.white[1], C.white[2], C.white[3], C.white[4], "  1. 选择形状和绘图模式")
             GUI:TextColored(C.white[1], C.white[2], C.white[3], C.white[4], "  2. 调整形状参数和颜色")
             GUI:TextColored(C.white[1], C.white[2], C.white[3], C.white[4], "  3. 点击「预览绘图」查看效果")
-            GUI:TextColored(C.white[1], C.white[2], C.white[3], C.white[4], "  4. 满意后「生成代码」→「复制代码」")
+            GUI:TextColored(C.white[1], C.white[2], C.white[3], C.white[4], "  4. 满意后「生成代码」->「复制代码」")
             GUI:TextColored(C.white[1], C.white[2], C.white[3], C.white[4], "  5. 粘贴到 TensorReactions 触发器中使用")
 
             GUI:Spacing()
