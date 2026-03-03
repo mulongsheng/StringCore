@@ -120,6 +120,11 @@ core.Draw = function()
     if StringGuide.MapEffectUI and StringGuide.MapEffectUI.open and StringGuide.DrawMapEffectUI then
         StringGuide.DrawMapEffectUI()
     end
+    
+    -- 绘制 Argus 代码生成器
+    if StringGuide.ArgusBuilderUI and StringGuide.ArgusBuilderUI.open and StringGuide.DrawArgusBuilderUI then
+        StringGuide.DrawArgusBuilderUI()
+    end
 end
 
 -- =============================================

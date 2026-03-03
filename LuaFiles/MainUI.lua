@@ -191,6 +191,18 @@ M.DrawMainUI = function()
             
             GUI:Spacing()
             
+            -- Argus 代码生成器按钮
+            if GUI:Button("Argus 代码生成器", 160, 30) then
+                M.ArgusBuilderUI.open = not M.ArgusBuilderUI.open
+            end
+            
+            if M.ArgusBuilderUI.open then
+                GUI:SameLine(0, 10)
+                GUI:TextColored(0.2, 1.0, 0.2, 1.0, "(已打开)")
+            end
+            
+            GUI:Spacing()
+            
             -- 开发模式切换
             M.DevelopMode = GUI:Checkbox("开发模式 (热加载UI)", M.DevelopMode)
             
