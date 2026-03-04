@@ -457,6 +457,28 @@ local function DrawDetailPanel(entry)
     if GUI:Button("复制全部信息##detail", 140, 25) then
         CopyToClipboard(BuildEntrySummary(entry))
     end
+    GUI:SameLine(0, 8)
+    -- 发送到 Argus 代码生成器
+    GUI:PushStyleColor(GUI.Col_Button, 0.3, 0.5, 0.8, 0.9)
+    GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.4, 0.6, 0.9, 1.0)
+    GUI:PushStyleColor(GUI.Col_ButtonActive, 0.2, 0.4, 0.7, 1.0)
+    if GUI:Button("发送到生成器##sendToBuilder" .. tostring(entry.index), 140, 25) then
+        M._mapEffectTransfer = {
+            a1 = entry.index,
+            a3 = nil,
+            posX = entry.position.x,
+            posY = entry.position.y,
+            posZ = entry.position.z,
+        }
+        if Argus and Argus.getEffectResourceScriptFlagForIndex then
+            M._mapEffectTransfer.a3 = Argus.getEffectResourceScriptFlagForIndex(entry.index)
+        end
+        if M.ArgusBuilderUI then
+            M.ArgusBuilderUI.open = true
+        end
+        d("[MapEffect] 已发送到生成器: Index=" .. entry.index)
+    end
+    GUI:PopStyleColor(3)
 
     GUI:Spacing()
 end
@@ -503,8 +525,22 @@ M.DrawMapEffectUI = function()
         GUI:PopItemWidth()
         GUI:SameLine(0, 15)
         GUI:PushItemWidth(120)
-        local typeNames = { "全部", "Model(2)", "VFX(4)", "Script(6)", "Sound(7)" }
-        local typeValues = { 0, 2, 4, 6, 7 }
+        -- 动态生成类型列表：只显示当前存在的类型
+        local typeCounts = {}
+        for _, e in ipairs(State.effects) do
+            if not e.unavailable then
+                typeCounts[e.type] = (typeCounts[e.type] or 0) + 1
+            end
+        end
+        local typeNames = { "全部" }
+        local typeValues = { 0 }
+        local sortedTypes = {}
+        for t, _ in pairs(typeCounts) do table.insert(sortedTypes, t) end
+        table.sort(sortedTypes)
+        for _, t in ipairs(sortedTypes) do
+            table.insert(typeNames, GetTypeName(t) .. "(" .. t .. ") x" .. typeCounts[t])
+            table.insert(typeValues, t)
+        end
         local currentTypeIdx = 1
         for idx, v in ipairs(typeValues) do
             if v == State.filterType then currentTypeIdx = idx break end
@@ -523,16 +559,41 @@ M.DrawMapEffectUI = function()
         -- 正在执行的特效
         -- =============================================
         if #State.runningEffects > 0 then
-            if GUI:CollapsingHeader("正在执行的特效 (" .. #State.runningEffects .. ")##MERunning") then
+            if GUI:CollapsingHeader("正在执行的特效##MERunning") then
                 GUI:Indent(8)
+
+                -- 数量 + 全部停止按钮
+                GUI:TextColored(C.success[1], C.success[2], C.success[3], C.success[4],
+                    "共 " .. #State.runningEffects .. " 个")
+                GUI:SameLine(0, 10)
+                GUI:PushStyleColor(GUI.Col_Button, 0.7, 0.2, 0.2, 0.9)
+                GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.8, 0.3, 0.3, 1.0)
+                GUI:PushStyleColor(GUI.Col_ButtonActive, 0.6, 0.15, 0.15, 1.0)
+                if GUI:Button("全部停止##runningStopAll", 80, 22) then
+                    for _, re in ipairs(State.runningEffects) do
+                        local res = Argus.getMapEffectResource(re.index)
+                        if res then
+                            local _, _, resType, _ = Argus.getEffectResourceInfo(res)
+                            if resType == 6 then
+                                local numScripts = Argus.getNumEffectResourceScripts(res)
+                                for si = 0, numScripts - 1 do
+                                    Argus.stopEffectResourceScript(res, si)
+                                end
+                            end
+                        end
+                    end
+                    d("[MapEffect] 已全部停止 (" .. #State.runningEffects .. " 个)")
+                    State.runningEffects = {}
+                end
+                GUI:PopStyleColor(3)
+                GUI:Spacing()
+
                 local toRemove = {}
                 for ri, re in ipairs(State.runningEffects) do
                     GUI:TextColored(C.success[1], C.success[2], C.success[3], C.success[4],
                         string.format("[%d] Index:%d  A2:%d  Flags:%d", ri, re.index, re.a2, re.flags))
                     GUI:SameLine()
                     if GUI:Button("停止##running" .. ri) then
-                        -- runMapEffect 触发的特效不受 stopEffectResourceScript 控制
-                        -- 需要找到对应的 _off 脚本并通过 runMapEffect 或 startEffectResourceScript 执行
                         d("[MapEffect] 尝试停止特效 Index=" .. re.index .. " Flags=" .. re.flags)
                         local res = Argus.getMapEffectResource(re.index)
                         if res then
@@ -546,12 +607,9 @@ M.DrawMapEffectUI = function()
                                     local sName, _, _, _ = Argus.getEffectResourceScriptInfo(res, si)
                                     if sName and string.find(sName, "_off") then
                                         d("[MapEffect] 找到 off 脚本: [" .. si .. "] " .. sName .. "，尝试启动")
-                                        -- 方式A: 通过 startEffectResourceScript 直接启动 off 脚本
                                         local result = Argus.startEffectResourceScript(res, si, 0)
                                         d("[MapEffect]   startEffectResourceScript 结果: " .. tostring(result))
-                                        -- 方式B: 获取该脚本的 flag 并通过 runMapEffect 执行
                                         local offFlag = Argus.getEffectResourceScriptFlagForIndex(re.index)
-                                        -- flag 是按 index 对应的，尝试用脚本 index 转换
                                         d("[MapEffect]   off 脚本 index=" .. si)
                                         stopped = true
                                     end
@@ -562,7 +620,6 @@ M.DrawMapEffectUI = function()
                                     for si = 0, numScripts - 1 do
                                         local sName, _, _, isRunning = Argus.getEffectResourceScriptInfo(res, si)
                                         d("[MapEffect]   Script[" .. si .. "]: " .. tostring(sName) .. " running=" .. tostring(isRunning))
-                                        -- 无论 isRunning 状态，都尝试 stop
                                         Argus.stopEffectResourceScript(res, si)
                                     end
                                     d("[MapEffect] 已尝试停止所有脚本")
@@ -635,6 +692,36 @@ M.DrawMapEffectUI = function()
             if GUI:IsItemHovered() then
                 GUI:SetTooltip("根据 Flag 反向查询 Index")
             end
+            GUI:Spacing()
+            GUI:PushStyleColor(GUI.Col_Button, 0.3, 0.5, 0.8, 0.9)
+            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.4, 0.6, 0.9, 1.0)
+            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.2, 0.4, 0.7, 1.0)
+            if GUI:Button("发送到生成器##runMESend", 130, 25) then
+                M._mapEffectTransfer = {
+                    a1 = State.runIndex,
+                    a3 = State.runFlags,
+                }
+                -- 尝试获取位置
+                if Argus and Argus.getMapEffectResource then
+                    local res = Argus.getMapEffectResource(State.runIndex)
+                    if res then
+                        local px, py, pz = Argus.getEffectResourcePosition(res)
+                        if px then
+                            M._mapEffectTransfer.posX = px
+                            M._mapEffectTransfer.posY = py
+                            M._mapEffectTransfer.posZ = pz
+                        end
+                    end
+                end
+                if M.ArgusBuilderUI then
+                    M.ArgusBuilderUI.open = true
+                end
+                d("[MapEffect] 已发送到生成器: Index=" .. State.runIndex .. " Flags=" .. State.runFlags)
+            end
+            GUI:PopStyleColor(3)
+            if GUI:IsItemHovered() then
+                GUI:SetTooltip("将当前 Index 和 Flags 发送到 Argus 代码生成器")
+            end
             GUI:Unindent(8)
         end
 
@@ -696,24 +783,85 @@ M.DrawMapEffectUI = function()
 
                     GUI:TextColored(col[1], col[2], col[3], col[4], label)
 
-                    -- 左键展开/收起详情
-                    if GUI:IsItemClicked(0) then
+                    -- 同行添加 运行/停止 切换按钮
+                    GUI:SameLine(0, 5)
+                    -- 查找是否正在运行
+                    local runningIdx = nil
+                    for ri, re in ipairs(State.runningEffects) do
+                        if re.index == entry.index then runningIdx = ri break end
+                    end
+
+                    if runningIdx then
+                        -- 正在运行 → 红色停止按钮
+                        GUI:PushStyleColor(GUI.Col_Button, 0.75, 0.20, 0.20, 0.9)
+                        GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.85, 0.30, 0.30, 1.0)
+                        GUI:PushStyleColor(GUI.Col_ButtonActive, 0.60, 0.15, 0.15, 1.0)
+                        if GUI:Button("x##run" .. entry.index, 22, 18) then
+                            local res = Argus.getMapEffectResource(entry.index)
+                            if res then
+                                local _, _, resType, _ = Argus.getEffectResourceInfo(res)
+                                if resType == 6 then
+                                    local numScripts = Argus.getNumEffectResourceScripts(res)
+                                    for si = 0, numScripts - 1 do
+                                        Argus.stopEffectResourceScript(res, si)
+                                    end
+                                end
+                            end
+                            table.remove(State.runningEffects, runningIdx)
+                            d("[MapEffect] 停止: Index=" .. entry.index)
+                        end
+                        GUI:PopStyleColor(3)
+                        if GUI:IsItemHovered() then
+                            GUI:SetTooltip("停止此特效")
+                        end
+                    else
+                        -- 未运行 → 绿色启动按钮
+                        GUI:PushStyleColor(GUI.Col_Button, 0.20, 0.65, 0.35, 0.85)
+                        GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.30, 0.80, 0.45, 0.95)
+                        GUI:PushStyleColor(GUI.Col_ButtonActive, 0.15, 0.55, 0.25, 1.0)
+                        if GUI:Button(">##run" .. entry.index, 22, 18) then
+                            if Argus and Argus.runMapEffect then
+                                local flag = 0
+                                if Argus.getEffectResourceScriptFlagForIndex then
+                                    flag = Argus.getEffectResourceScriptFlagForIndex(entry.index) or 0
+                                end
+                                Argus.runMapEffect(entry.index, 0, flag)
+                                d("[MapEffect] 运行: Index=" .. entry.index .. " Flag=" .. flag)
+                                table.insert(State.runningEffects, {
+                                    index = entry.index, a2 = 0, flags = flag
+                                })
+                            end
+                        end
+                        GUI:PopStyleColor(3)
+                        if GUI:IsItemHovered() then
+                            GUI:SetTooltip("运行此特效 (runMapEffect)")
+                        end
+                    end
+
+                    -- 同行添加展开按钮
+                    GUI:SameLine(0, 3)
+                    local expandLabel = (State.selectedIndex == entry.index) and "-" or "+"
+                    GUI:PushStyleColor(GUI.Col_Button, 0.30, 0.30, 0.35, 0.7)
+                    GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.40, 0.40, 0.50, 0.85)
+                    GUI:PushStyleColor(GUI.Col_ButtonActive, 0.25, 0.25, 0.30, 1.0)
+                    if GUI:Button(expandLabel .. "##expand" .. entry.index, 22, 18) then
                         if State.selectedIndex == entry.index then
                             State.selectedIndex = -1
                         else
                             State.selectedIndex = entry.index
                         end
                     end
-
-                    -- 右键复制完整信息
-                    if GUI:IsItemClicked(1) then
-                        CopyToClipboard(BuildEntrySummary(entry))
-                    end
-
-                    -- 悬停提示
+                    GUI:PopStyleColor(3)
                     if GUI:IsItemHovered() then
-                        GUI:SetTooltip(entry.path .. "\n左键展开详情 | 右键复制完整信息")
+                        GUI:SetTooltip("展开/收起详情")
                     end
+
+                    -- 右键复制完整信息（在标签文字上）
+                    -- 注意：此处检查的是最后一个控件（展开按钮），标签文字的右键已被按钮阻断
+                    -- 所以我们不再用 IsItemClicked(1)
+
+                    -- 悬停提示（标签文字）—— 由于按钮在同行，标签文字的 hover 不再独立可靠
+                    -- tooltip 已集成到各按钮中
 
                     -- 展开详情
                     if State.selectedIndex == entry.index then

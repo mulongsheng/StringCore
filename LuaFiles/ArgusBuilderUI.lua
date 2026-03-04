@@ -144,6 +144,16 @@ local State = {
     loopInterval = 500,     -- 间隔延迟(毫秒)
     loopShapeIndex = 1,     -- 循环使用的形状索引
     comboGeneratedCode = "",
+
+    -- MapEffect 触发器
+    meEntries = {},         -- 触发条件列表
+    meA1 = 0,
+    meA3 = 0,
+    meCheckA3 = true,       -- 是否检查 a3 (flags)
+    meLabel = "",           -- 机制备注
+    meCodeMode = 1,         -- 1=TensorReactions, 2=Argus.registerOnMapEffect
+    mePosMode = 1,          -- 1=固定坐标, 2=特效位置, 3=玩家位置
+    meGeneratedCode = "",
 }
 
 -- =============================================
@@ -648,6 +658,43 @@ local function SnapshotCurrentStep(stepDelay)
 end
 
 -- =============================================
+-- 快照当前参数为 MapEffect 触发步骤
+-- =============================================
+local function SnapshotMEStep()
+    local shape = GetCurrentShape()
+    if not shape then return nil end
+    SyncPlayerPos()
+    return {
+        a1 = State.meA1,
+        a3 = State.meA3,
+        checkA3 = State.meCheckA3,
+        label = State.meLabel,
+        posMode = State.mePosMode,
+        shapeIndex = State.shapeIndex,
+        shapeName  = shape.name,
+        shapeId    = shape.id,
+        timeout    = State.timeout,
+        delay      = State.delay,
+        radius      = State.radius,
+        radiusInner = State.radiusInner,
+        radiusOuter = State.radiusOuter,
+        length      = State.length,
+        width       = State.width,
+        angle       = State.angle,
+        heading     = State.heading,
+        usePlayerHeading = State.usePlayerHeading,
+        thickness   = State.thickness,
+        baseLength  = State.baseLength,
+        baseWidth   = State.baseWidth,
+        tipLength   = State.tipLength,
+        tipWidth    = State.tipWidth,
+        posX = State.posX,
+        posY = State.posY,
+        posZ = State.posZ,
+    }
+end
+
+-- =============================================
 -- 生成单个形状的绘图调用字符串
 -- =============================================
 local function GenerateShapeCall(step, posVar, headingVar, delayVal)
@@ -810,6 +857,114 @@ local function GenerateComboCode()
 end
 
 -- =============================================
+-- MapEffect 触发器代码生成
+-- =============================================
+local function GenerateMapEffectCode()
+    local entries = State.meEntries
+    if #entries == 0 then
+        State.meGeneratedCode = "-- 没有 MapEffect 触发条件，请先添加"
+        return
+    end
+
+    local lines = {}
+    local isRegister = (State.meCodeMode == 2)
+
+    table.insert(lines, "-- MapEffect 触发绘图代码 (由 StringCore 代码生成器生成)")
+    if isRegister then
+        table.insert(lines, "-- 模式: Argus.registerOnMapEffect (独立注册)")
+    else
+        table.insert(lines, "-- 模式: TensorReactions OnMapEffect 事件")
+        table.insert(lines, "-- 在 TensorReactions 中创建触发器，事件类型选择 OnMapEffect")
+    end
+    table.insert(lines, "")
+
+    -- Drawer
+    if State.useMoogleDrawer then
+        table.insert(lines, "local drawer = TensorCore.getMoogleDrawer()")
+    elseif State.useGradient then
+        table.insert(lines, string.format("local drawer = Argus2.ShapeDrawer:new(%s, %s, %s, %s, %s)",
+            FormatColor(State.startR, State.startG, State.startB, State.startA),
+            FormatColor(State.midR, State.midG, State.midB, State.midA),
+            FormatColor(State.endR, State.endG, State.endB, State.endA),
+            FormatColor(State.outlineR, State.outlineG, State.outlineB, State.outlineA),
+            FormatNum(State.outlineThickness)))
+    else
+        table.insert(lines, string.format("local drawer = Argus2.ShapeDrawer:new(nil, nil, %s, %s, %s)",
+            FormatColor(State.fillR, State.fillG, State.fillB, State.fillA),
+            FormatColor(State.outlineR, State.outlineG, State.outlineB, State.outlineA),
+            FormatNum(State.outlineThickness)))
+    end
+    table.insert(lines, "")
+
+    local bi = ""  -- base indent
+    if isRegister then
+        table.insert(lines, "Argus.registerOnMapEffect(function(a1, a2, a3)")
+        bi = "    "
+    end
+
+    for i, entry in ipairs(entries) do
+        if i > 1 then table.insert(lines, "") end
+
+        -- 条件
+        local cond = "a1 == " .. FormatNum(entry.a1)
+        if entry.checkA3 then
+            cond = cond .. " and a3 == " .. FormatNum(entry.a3)
+        end
+
+        if entry.label and entry.label ~= "" then
+            table.insert(lines, bi .. "-- " .. entry.label)
+        end
+        table.insert(lines, bi .. "if " .. cond .. " then")
+
+        local ii = bi .. "    "  -- inner indent
+
+        -- Heading
+        local needsHeading = (entry.shapeId == "Cone" or entry.shapeId == "Rect" or entry.shapeId == "CenteredRect"
+            or entry.shapeId == "DonutCone" or entry.shapeId == "Cross" or entry.shapeId == "Arrow" or entry.shapeId == "Chevron")
+        if needsHeading then
+            if entry.usePlayerHeading then
+                table.insert(lines, ii .. "local heading = Player.pos.h")
+            else
+                table.insert(lines, ii .. string.format("local heading = math.rad(%s)  -- %s°",
+                    FormatNum(entry.heading), FormatNum(entry.heading)))
+            end
+        end
+
+        table.insert(lines, ii .. string.format("local timeout = %s", FormatNum(entry.timeout or 5000)))
+
+        -- 位置 + 绘图调用
+        local headVar = needsHeading and "heading" or "0"
+        if entry.posMode == 2 then
+            -- 特效资源位置
+            table.insert(lines, ii .. "local res = Argus.getMapEffectResource(a1)")
+            table.insert(lines, ii .. "if res then")
+            local di = ii .. "    "
+            table.insert(lines, di .. "local x, y, z = Argus.getEffectResourcePosition(res)")
+            table.insert(lines, di .. GenerateShapeCall(entry, "x, y, z", headVar, entry.delay or 0))
+            table.insert(lines, ii .. "end")
+        elseif entry.posMode == 3 then
+            -- 玩家位置
+            table.insert(lines, ii .. "local x, y, z = Player.pos.x, Player.pos.y, Player.pos.z")
+            table.insert(lines, ii .. GenerateShapeCall(entry, "x, y, z", headVar, entry.delay or 0))
+        else
+            -- 固定坐标
+            table.insert(lines, ii .. string.format("local x, y, z = %s, %s, %s",
+                FormatNum(entry.posX), FormatNum(entry.posY), FormatNum(entry.posZ)))
+            table.insert(lines, ii .. GenerateShapeCall(entry, "x, y, z", headVar, entry.delay or 0))
+        end
+
+        table.insert(lines, bi .. "end")
+    end
+
+    if isRegister then
+        table.insert(lines, "end)")
+    end
+
+    table.insert(lines, "")
+    State.meGeneratedCode = table.concat(lines, "\n")
+end
+
+-- =============================================
 -- 组合机制预览执行
 -- =============================================
 local function ExecuteComboPreview()
@@ -918,6 +1073,23 @@ M.DrawArgusBuilderUI = function()
     M.ArgusBuilderUI.visible, M.ArgusBuilderUI.open = GUI:Begin("Argus 绘图代码生成器###ArgusBuilderWindow", M.ArgusBuilderUI.open)
 
     if M.ArgusBuilderUI.visible then
+
+        -- 接收 MapEffectUI 传递的数据
+        if M._mapEffectTransfer then
+            State.meA1 = M._mapEffectTransfer.a1 or 0
+            if M._mapEffectTransfer.a3 then
+                State.meA3 = M._mapEffectTransfer.a3
+                State.meCheckA3 = true
+            end
+            if M._mapEffectTransfer.posX then
+                State.posX = M._mapEffectTransfer.posX
+                State.posY = M._mapEffectTransfer.posY
+                State.posZ = M._mapEffectTransfer.posZ
+                State.usePlayerPos = false
+            end
+            State.lastLog = "已从 MapEffect 查看器接收: Index=" .. State.meA1
+            M._mapEffectTransfer = nil
+        end
 
         -- =============================================
         -- 1. 形状选择
@@ -1487,6 +1659,177 @@ M.DrawArgusBuilderUI = function()
 
                 GUI:InputTextMultiline("##ArgusComboCodeOutput", State.comboGeneratedCode, -1, textHeight, GUI.InputTextFlags_ReadOnly)
 
+                GUI:PopItemWidth()
+                GUI:PopStyleColor(1)
+            end
+
+            GUI:Unindent(5)
+        end
+
+        GUI:Spacing()
+
+        -- =============================================
+        -- 7.5 MapEffect 触发器
+        -- =============================================
+        if GUI:CollapsingHeader("MapEffect 触发器##ArgusME") then
+            GUI:Indent(5)
+
+            -- 代码模式
+            local meModeNames = { "TensorReactions OnMapEffect", "Argus.registerOnMapEffect" }
+            GUI:PushItemWidth(280)
+            State.meCodeMode = GUI:Combo("代码模式##MECodeMode", State.meCodeMode, meModeNames)
+            GUI:PopItemWidth()
+            if State.meCodeMode == 1 then
+                GUI:TextColored(C.hint[1], C.hint[2], C.hint[3], C.hint[4],
+                    "  在 TensorReactions 中新建触发器，事件类型选 OnMapEffect")
+            else
+                GUI:TextColored(C.hint[1], C.hint[2], C.hint[3], C.hint[4],
+                    "  生成独立的 Argus.registerOnMapEffect() 注册代码")
+            end
+
+            GUI:Spacing()
+            GUI:Separator()
+            GUI:Spacing()
+
+            -- 触发条件输入
+            GUI:TextColored(C.section[1], C.section[2], C.section[3], C.section[4], "触发条件:")
+            GUI:Spacing()
+
+            GUI:PushItemWidth(100)
+            State.meA1 = GUI:InputInt("Index (a1)##MEA1", State.meA1)
+            GUI:SameLine(0, 10)
+            State.meA3 = GUI:InputInt("Flags (a3)##MEA3", State.meA3)
+            GUI:PopItemWidth()
+
+            State.meCheckA3 = GUI:Checkbox("检查 Flags##MECheckA3", State.meCheckA3)
+            if GUI:IsItemHovered() then
+                GUI:SetTooltip("不勾选则只判断 Index(a1)，忽略 Flags(a3)")
+            end
+
+            -- 位置来源
+            local posModeNames = { "固定坐标 (当前设置)", "特效资源位置 (自动获取)", "玩家实时位置" }
+            GUI:PushItemWidth(250)
+            State.mePosMode = GUI:Combo("位置来源##MEPosMode", State.mePosMode, posModeNames)
+            GUI:PopItemWidth()
+            if State.mePosMode == 2 then
+                GUI:TextColored(C.hint[1], C.hint[2], C.hint[3], C.hint[4],
+                    "  自动调用 Argus.getEffectResourcePosition 获取特效位置")
+            end
+
+            -- 备注
+            GUI:PushItemWidth(200)
+            State.meLabel = GUI:InputText("备注##MELabel", State.meLabel)
+            GUI:PopItemWidth()
+
+            GUI:Spacing()
+
+            -- 添加/清空按钮
+            GUI:PushStyleColor(GUI.Col_Button, 0.2, 0.6, 0.4, 0.9)
+            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.3, 0.7, 0.5, 1.0)
+            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.15, 0.5, 0.35, 1.0)
+            if GUI:Button("添加当前形状为触发条件##MEAdd", 220, 24) then
+                local entry = SnapshotMEStep()
+                if entry then
+                    table.insert(State.meEntries, entry)
+                    State.lastLog = "已添加 MapEffect 触发: a1=" .. entry.a1
+                end
+            end
+            GUI:PopStyleColor(3)
+
+            GUI:SameLine(0, 8)
+
+            GUI:PushStyleColor(GUI.Col_Button, 0.7, 0.2, 0.2, 0.9)
+            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.8, 0.3, 0.3, 1.0)
+            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.6, 0.15, 0.15, 1.0)
+            if GUI:Button("清空##MEClear", 60, 24) then
+                State.meEntries = {}
+                State.meGeneratedCode = ""
+                State.lastLog = "已清空所有 MapEffect 触发条件"
+            end
+            GUI:PopStyleColor(3)
+
+            GUI:Spacing()
+
+            -- 条件列表
+            if #State.meEntries == 0 then
+                GUI:TextColored(C.muted[1], C.muted[2], C.muted[3], C.muted[4],
+                    "  还没有触发条件。设置好参数后点「添加当前形状为触发条件」")
+                GUI:TextColored(C.muted[1], C.muted[2], C.muted[3], C.muted[4],
+                    "  也可在 MapEffect 查看器中点「发送到生成器」")
+            else
+                local removeIdx = nil
+                for i, entry in ipairs(State.meEntries) do
+                    local posDesc = ({"固定坐标", "特效位置", "玩家位置"})[entry.posMode] or "未知"
+                    local summary = string.format("%d. [a1=%d", i, entry.a1)
+                    if entry.checkA3 then
+                        summary = summary .. string.format(" a3=%d", entry.a3)
+                    end
+                    summary = summary .. "] " .. entry.shapeName .. " (" .. posDesc .. ")"
+                    if entry.label and entry.label ~= "" then
+                        summary = summary .. " - " .. entry.label
+                    end
+
+                    GUI:TextColored(C.white[1], C.white[2], C.white[3], C.white[4], "  " .. summary)
+
+                    GUI:SameLine(0, 5)
+                    GUI:PushStyleColor(GUI.Col_Button, 0.6, 0.15, 0.15, 0.8)
+                    GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.8, 0.2, 0.2, 0.9)
+                    GUI:PushStyleColor(GUI.Col_ButtonActive, 0.5, 0.1, 0.1, 1.0)
+                    if GUI:Button("删除##MERemove" .. i, 40, 18) then
+                        removeIdx = i
+                    end
+                    GUI:PopStyleColor(3)
+                end
+                if removeIdx then
+                    table.remove(State.meEntries, removeIdx)
+                    State.lastLog = "已删除 MapEffect 触发条件 " .. removeIdx
+                end
+            end
+
+            GUI:Spacing()
+            GUI:Separator()
+            GUI:Spacing()
+
+            -- 生成/复制按钮
+            GUI:PushStyleColor(GUI.Col_Button, 0.2, 0.5, 0.8, 0.9)
+            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.3, 0.6, 0.9, 1.0)
+            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.15, 0.4, 0.7, 1.0)
+            if GUI:Button("生成 MapEffect 代码##MEGen", 170, 28) then
+                SyncPlayerPos()
+                GenerateMapEffectCode()
+                State.lastLog = "MapEffect 代码已生成"
+            end
+            GUI:PopStyleColor(3)
+
+            GUI:SameLine(0, 8)
+
+            GUI:PushStyleColor(GUI.Col_Button, 0.2, 0.7, 0.3, 0.9)
+            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.3, 0.8, 0.4, 1.0)
+            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.15, 0.6, 0.25, 1.0)
+            if GUI:Button("复制 MapEffect 代码##MECopy", 170, 28) then
+                if State.meGeneratedCode == "" then
+                    SyncPlayerPos()
+                    GenerateMapEffectCode()
+                end
+                CopyToClipboard(State.meGeneratedCode)
+            end
+            GUI:PopStyleColor(3)
+
+            -- 代码展示
+            if State.meGeneratedCode ~= "" then
+                GUI:Spacing()
+                GUI:TextColored(C.title[1], C.title[2], C.title[3], C.title[4], "MapEffect 触发代码")
+                GUI:Spacing()
+
+                GUI:PushStyleColor(GUI.Col_FrameBg, 0.1, 0.1, 0.15, 0.95)
+                GUI:PushItemWidth(-1)
+                local lineCount = 1
+                for _ in string.gmatch(State.meGeneratedCode, "\n") do
+                    lineCount = lineCount + 1
+                end
+                local textHeight = math.max(lineCount * 16 + 10, 100)
+                if textHeight > 300 then textHeight = 300 end
+                GUI:InputTextMultiline("##MECodeOutput", State.meGeneratedCode, -1, textHeight, GUI.InputTextFlags_ReadOnly)
                 GUI:PopItemWidth()
                 GUI:PopStyleColor(1)
             end
