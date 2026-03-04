@@ -478,7 +478,7 @@ M.DrawEffectListTab = function()
     T.HintText(filteredCount .. "/" .. numTotal)
 
     GUI:Separator()
-    GUI:BeginChild("MEList", 0, 0, false)
+    GUI:BeginChild("MEList", 0, -220, false)
 
     for _, entry in ipairs(State.effects) do
         if MatchesFilter(entry) then
