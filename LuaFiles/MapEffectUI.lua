@@ -256,7 +256,7 @@ local function StopEffect(index)
             for si = 0, numScripts - 1 do
                 local sName, _, _, _ = Argus.getEffectResourceScriptInfo(res, si)
                 if sName and string.find(sName, "_off") then
-                    Argus.startEffectResourceScript(res, si, 0)
+                    Argus.startEffectResourceScript(res, si, 1)
                     stopped = true
                 end
             end
@@ -392,15 +392,19 @@ local function DrawDetailPanel(entry)
                 string.format("  [%d] %s (%s, %d sub)", script.index, script.name,
                     script.isRunning and "运行中" or "已停止", script.numSubresources or 0))
             GUI:SameLine()
-            if script.isRunning then
-                if GUI:Button("停止##script" .. script.index) then
-                    Argus.stopEffectResourceScript(entry.resource, script.index)
-                end
-            else
-                if GUI:Button("启动##script" .. script.index) then
-                    Argus.startEffectResourceScript(entry.resource, script.index, 0)
-                end
+            T.PushBtn(C.btnRun)
+            if GUI:Button("启动##script" .. script.index) then
+                d(string.format("[MapEffect] startScript: res=%s, scriptIdx=%d", tostring(entry.resource), script.index))
+                Argus.startEffectResourceScript(entry.resource, script.index, 1)
             end
+            T.PopBtn()
+            GUI:SameLine(0, 3)
+            T.PushBtn(C.btnStop)
+            if GUI:Button("停止##scriptstop" .. script.index) then
+                d(string.format("[MapEffect] stopScript via StopEffect: idx=%d", entry.index))
+                StopEffect(entry.index)
+            end
+            T.PopBtn()
             for _, sub in ipairs(script.subresources) do
                 DrawSubresourceRow(sub, "      ")
             end

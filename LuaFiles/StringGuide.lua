@@ -19,9 +19,9 @@ M.UI = {
     visible = false
 }
 
--- 减伤 UI 状态
-M.MitigationUI = {
-    open = false,
+-- 队伍悬浮窗 UI 状态
+M.PartyOverlay = {
+    open = true,
     visible = false
 }
 
@@ -219,10 +219,6 @@ M.InitConfig = function()
     if not FolderExists(M.ConfigPath) then
         FolderCreate(M.ConfigPath)
     end
-    
-    -- 初始化减伤配置
-    M.Config.Mitigation = {}
-    M.Config.MitigationPrevious = {}
 end
 
 -- 保存配置（带变更检测）
