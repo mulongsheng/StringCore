@@ -50,7 +50,7 @@ local PresetColors = {
 -- =============================================
 -- 绘图模式定义
 -- =============================================
-local ApiLevelNames = { "ShapeDrawer (推荐)", "Argus2 底层" }
+local ApiLevelNames = { "ShapeDrawer (推荐)", "Argus2 底层", "StaticDrawer (OnFrame专用)" }
 local TimingModeNames = { "Timed (持续时间)", "OnFrame (每帧瞬时)" }
 local AttachModeNames = { "坐标固定", "OnEnt (附着实体)" }
 
@@ -249,10 +249,16 @@ local function GenerateCode()
         table.insert(lines, "")
     end
 
-    if isShapeDrawer then
-        -- === ShapeDrawer 模式 ===
+    if isShapeDrawer or State.apiLevel == 3 then
+        -- === ShapeDrawer / StaticDrawer 模式 ===
         -- 创建 drawer
-        if State.useMoogleDrawer then
+        if State.apiLevel == 3 then
+            -- StaticDrawer (OnFrame 专用，不支持 Timed)
+            local outlineColor = FormatColor(State.outlineR, State.outlineG, State.outlineB, State.outlineA)
+            table.insert(lines, "-- StaticDrawer: 仅用于 OnFrame，无渐变")
+            table.insert(lines, string.format("local drawer = TensorCore.getStaticDrawer(%s, %s)",
+                outlineColor, FormatNum(State.outlineThickness)))
+        elseif State.useMoogleDrawer then
             table.insert(lines, "-- 使用 TensorCore 默认配色")
             table.insert(lines, "local drawer = TensorCore.getMoogleDrawer()")
         elseif State.useGradient then
@@ -310,6 +316,14 @@ local function GenerateCode()
                 elseif sid == "Chevron" then
                     args = args .. ", " .. FormatNum(State.length) .. ", " .. FormatNum(State.thickness)
                     args = args .. ", " .. tgtStr .. ", " .. FormatNum(State.delay)
+                end
+
+                -- 附加 headingOffset / offsetIsAbsolute（如果设置了非默认值）
+                if State.headingOffset ~= 0 then
+                    args = args .. ", " .. FormatNum(math.rad(State.headingOffset))
+                    if State.offsetIsAbsolute then
+                        args = args .. ", true"
+                    end
                 end
 
                 table.insert(lines, "local uuid = drawer:" .. methodName .. "(" .. args .. ")")
@@ -419,6 +433,15 @@ local function GenerateCode()
                 table.insert(lines, "-- 请参考 TensorCore API Reference 了解 " .. methodName .. " 的完整参数列表")
             end
         end
+    end
+
+    -- updateTimed / deleteTimedShape 使用提示
+    if isTimed then
+        table.insert(lines, "")
+        table.insert(lines, "-- [提示] 动态更新已创建的绘图:")
+        table.insert(lines, "-- drawer:updateTimed" .. shape.id .. "(uuid, nil, newX, newY, newZ, newRadius)  -- 参数传 nil 保持原值")
+        table.insert(lines, "-- Argus.deleteTimedShape(uuid)  -- 删除单个绘图")
+        table.insert(lines, "-- Argus.deleteTimedShape()       -- 删除全部绘图")
     end
 
     table.insert(lines, "")
@@ -926,11 +949,17 @@ local function GenerateMapEffectCode()
         -- 位置 + 绘图调用
         local headVar = needsHeading and "heading" or "0"
         if entry.posMode == 2 then
-            -- 特效资源位置
+            -- 特效资源位置（可选获取朝向）
             table.insert(lines, ii .. "local res = Argus.getMapEffectResource(a1)")
             table.insert(lines, ii .. "if res then")
             local di = ii .. "    "
             table.insert(lines, di .. "local x, y, z = Argus.getEffectResourcePosition(res)")
+            if needsHeading and not entry.usePlayerHeading then
+                -- 从特效资源的方向向量推导朝向
+                table.insert(lines, di .. "local dx, dy, dz = Argus.getEffectResourceOrientation(res)")
+                table.insert(lines, di .. "local heading = math.atan2(dx, dz)  -- 从资源方向推导朝向")
+                headVar = "heading"
+            end
             table.insert(lines, di .. GenerateShapeCall(entry, "x, y, z", headVar, entry.delay or 0))
             table.insert(lines, ii .. "end")
         elseif entry.posMode == 3 then
@@ -1147,6 +1176,10 @@ M.DrawArgusBuilderUI = function()
 
         GUI:PushItemWidth(200)
         State.apiLevel = GUI:Combo("API 层级##ArgusApi", State.apiLevel, ApiLevelNames)
+        if State.apiLevel == 3 then
+            T.HintText("StaticDrawer 仅支持 OnFrame 瞬时绘图，不支持 Timed 模式")
+            State.timingMode = 2  -- 强制切换为 OnFrame
+        end
         State.timingMode = GUI:Combo("时机类型##ArgusTiming", State.timingMode, TimingModeNames)
         State.attachMode = GUI:Combo("附着方式##ArgusAttach", State.attachMode, AttachModeNames)
         GUI:PopItemWidth()

@@ -33,13 +33,18 @@ local State = {
     lastRefreshTime = 0,
     -- runMapEffect 面板
     runIndex = 0,
-    runA2 = 0,
+    runA2 = 1,
     runFlags = 0,
     -- 编辑用临时值
     editPos = { x = 0, y = 0, z = 0 },
     editScale = { x = 1, y = 1, z = 1 },
     editOrientDir = { x = 0, y = 0, z = 0 },
     editOrientUp = { x = 0, y = 1, z = 0 },
+    -- 原始值（用于重置）
+    origPos = { x = 0, y = 0, z = 0 },
+    origScale = { x = 1, y = 1, z = 1 },
+    origOrientDir = { x = 0, y = 0, z = 0 },
+    origOrientUp = { x = 0, y = 1, z = 0 },
     editingEntry = -1,
     -- addPlayerMarker
     markerID = 0,
@@ -309,6 +314,11 @@ local function DrawDetailPanel(entry)
         State.editScale = { x = entry.scale.x, y = entry.scale.y, z = entry.scale.z }
         State.editOrientDir = { x = entry.orientation.dir.x, y = entry.orientation.dir.y, z = entry.orientation.dir.z }
         State.editOrientUp = { x = entry.orientation.up.x, y = entry.orientation.up.y, z = entry.orientation.up.z }
+        -- 保存原始值用于重置
+        State.origPos = { x = entry.position.x, y = entry.position.y, z = entry.position.z }
+        State.origScale = { x = entry.scale.x, y = entry.scale.y, z = entry.scale.z }
+        State.origOrientDir = { x = entry.orientation.dir.x, y = entry.orientation.dir.y, z = entry.orientation.dir.z }
+        State.origOrientUp = { x = entry.orientation.up.x, y = entry.orientation.up.y, z = entry.orientation.up.z }
     end
 
     GUI:PushItemWidth(70)
@@ -321,6 +331,11 @@ local function DrawDetailPanel(entry)
     if GUI:Button("应用##setpos") then
         Argus.setEffectResourcePosition(entry.resource, State.editPos.x, State.editPos.y, State.editPos.z)
     end
+    GUI:SameLine(0, 4)
+    if GUI:Button("重置##resetpos") then
+        State.editPos = { x = State.origPos.x, y = State.origPos.y, z = State.origPos.z }
+        Argus.setEffectResourcePosition(entry.resource, State.origPos.x, State.origPos.y, State.origPos.z)
+    end
 
     GUI:Text(string.format("Scale: %.3f, %.3f, %.3f", entry.scale.x, entry.scale.y, entry.scale.z))
     State.editScale.x = GUI:InputFloat("X##scale", State.editScale.x, 0.1, 1.0)
@@ -331,6 +346,11 @@ local function DrawDetailPanel(entry)
     GUI:SameLine()
     if GUI:Button("应用##setscale") then
         Argus.setEffectResourceScale(entry.resource, State.editScale.x, State.editScale.y, State.editScale.z)
+    end
+    GUI:SameLine(0, 4)
+    if GUI:Button("重置##resetscale") then
+        State.editScale = { x = State.origScale.x, y = State.origScale.y, z = State.origScale.z }
+        Argus.setEffectResourceScale(entry.resource, State.origScale.x, State.origScale.y, State.origScale.z)
     end
 
     GUI:Text(string.format("Dir: (%.3f,%.3f,%.3f) Up: (%.3f,%.3f,%.3f)",
@@ -351,6 +371,14 @@ local function DrawDetailPanel(entry)
         Argus.setEffectResourceOrientation(entry.resource,
             State.editOrientDir.x, State.editOrientDir.y, State.editOrientDir.z,
             State.editOrientUp.x, State.editOrientUp.y, State.editOrientUp.z)
+    end
+    GUI:SameLine(0, 4)
+    if GUI:Button("重置##resetori") then
+        State.editOrientDir = { x = State.origOrientDir.x, y = State.origOrientDir.y, z = State.origOrientDir.z }
+        State.editOrientUp = { x = State.origOrientUp.x, y = State.origOrientUp.y, z = State.origOrientUp.z }
+        Argus.setEffectResourceOrientation(entry.resource,
+            State.origOrientDir.x, State.origOrientDir.y, State.origOrientDir.z,
+            State.origOrientUp.x, State.origOrientUp.y, State.origOrientUp.z)
     end
     GUI:PopItemWidth()
 
@@ -510,10 +538,9 @@ M.DrawEffectListTab = function()
                     T.PushBtn(C.btnRun)
                     if GUI:Button(">##run" .. entry.index, 22, 18) then
                         if Argus and Argus.runMapEffect then
-                            local a2 = 0
                             local flags = Argus.getEffectResourceScriptFlagForIndex and Argus.getEffectResourceScriptFlagForIndex(entry.index) or 0
-                            Argus.runMapEffect(entry.index, a2, flags)
-                            table.insert(State.runningEffects, { index = entry.index, a2 = a2, flags = flags })
+                            Argus.runMapEffect(entry.index, State.runA2, flags)
+                            table.insert(State.runningEffects, { index = entry.index, a2 = State.runA2, flags = flags })
                         end
                     end
                     T.PopBtn()
