@@ -64,16 +64,7 @@ M.DrawMainUI = function()
             GUI:SameLine(0, 6)
         end
 
-        if GUI:Button("MapEffect", btnW, btnH) then
-            M.MapEffectUI.open = not M.MapEffectUI.open
-        end
-        if M.MapEffectUI.open then
-            GUI:SameLine(0, 2)
-            T.SuccessText("*")
-        end
-
-        GUI:SameLine(0, 6)
-        if GUI:Button("Argus", btnW, btnH) then
+        if GUI:Button("工具箱", btnW + 20, btnH) then
             M.ArgusBuilderUI.open = not M.ArgusBuilderUI.open
         end
         if M.ArgusBuilderUI.open then

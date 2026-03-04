@@ -116,12 +116,7 @@ core.Draw = function()
         StringGuide.DrawMitigationUI()
     end
     
-    -- 绘制 Map Effect 查看器
-    if StringGuide.MapEffectUI and StringGuide.MapEffectUI.open and StringGuide.DrawMapEffectUI then
-        StringGuide.DrawMapEffectUI()
-    end
-    
-    -- 绘制 Argus 代码生成器
+    -- 绘制合并工具箱 (MapEffect + Argus)
     if StringGuide.ArgusBuilderUI and StringGuide.ArgusBuilderUI.open and StringGuide.DrawArgusBuilderUI then
         StringGuide.DrawArgusBuilderUI()
     end

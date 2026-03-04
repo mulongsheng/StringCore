@@ -143,6 +143,8 @@ local State = {
     meCodeMode = 1,         -- 1=TensorReactions, 2=Argus.registerOnMapEffect
     mePosMode = 1,          -- 1=固定坐标, 2=特效位置, 3=玩家位置
     meGeneratedCode = "",
+    -- 当前标签页
+    activeTab = 1,
 }
 
 -- =============================================
@@ -1058,8 +1060,8 @@ end
 -- =============================================
 M.DrawArgusBuilderUI = function()
     T.PushTheme()
-    GUI:SetNextWindowSize(520, 700, GUI.SetCond_Appearing)
-    M.ArgusBuilderUI.visible, M.ArgusBuilderUI.open = GUI:Begin("Argus 代码生成器###ArgusBuilderWindow", M.ArgusBuilderUI.open)
+    GUI:SetNextWindowSize(720, 700, GUI.SetCond_Appearing)
+    M.ArgusBuilderUI.visible, M.ArgusBuilderUI.open = GUI:Begin("StringCore 工具箱###ArgusBuilderWindow", M.ArgusBuilderUI.open)
 
     if M.ArgusBuilderUI.visible then
 
@@ -1080,13 +1082,50 @@ M.DrawArgusBuilderUI = function()
             M._mapEffectTransfer = nil
         end
 
-        -- ===== TabBar =====
-        if GUI:BeginTabBar("ABTabBar") then
+        -- ===== 标签页按钮 =====
+        do
+            local tabs = { "特效列表", "执行控制", "形状参数", "颜色", "代码", "ME触发器" }
+            for i, name in ipairs(tabs) do
+                if i > 1 then GUI:SameLine(0, 2) end
+                if State.activeTab == i then
+                    GUI:PushStyleColor(GUI.Col_Button, 0.75, 0.22, 0.22, 1.00)
+                    GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.80, 0.28, 0.28, 1.00)
+                    GUI:PushStyleColor(GUI.Col_ButtonActive, 0.85, 0.30, 0.30, 1.00)
+                else
+                    GUI:PushStyleColor(GUI.Col_Button, 0.22, 0.15, 0.15, 0.80)
+                    GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.35, 0.18, 0.18, 0.90)
+                    GUI:PushStyleColor(GUI.Col_ButtonActive, 0.50, 0.20, 0.20, 1.00)
+                end
+                if GUI:Button(name .. "##ABTab" .. i, 0, 24) then
+                    State.activeTab = i
+                end
+                GUI:PopStyleColor(3)
+            end
+        end
+        GUI:Separator()
+        GUI:Spacing()
 
-        -- ========================================
-        -- Tab 1: 形状参数
-        -- ========================================
-        if GUI:BeginTabItem("形状参数") then
+        -- MapEffect 自动刷新
+        if M.MapEffectAutoRefresh then M.MapEffectAutoRefresh() end
+
+        -- Tab 1: 特效列表 (MapEffect)
+        if State.activeTab == 1 then
+            if M.DrawEffectListTab then
+                M.DrawEffectListTab()
+            else
+                T.HintText("MapEffectUI 未加载")
+            end
+
+        -- Tab 2: 执行控制 (MapEffect)
+        elseif State.activeTab == 2 then
+            if M.DrawExecControlTab then
+                M.DrawExecControlTab()
+            else
+                T.HintText("MapEffectUI 未加载")
+            end
+
+        -- Tab 3: 形状参数
+        elseif State.activeTab == 3 then
 
         T.SubHeader("形状选择")
         GUI:PushItemWidth(250)
@@ -1337,13 +1376,7 @@ M.DrawArgusBuilderUI = function()
 
         GUI:PopItemWidth()
 
-        GUI:EndTabItem()
-        end -- Tab1
-
-        -- ========================================
-        -- Tab 2: 颜色设置
-        -- ========================================
-        if GUI:BeginTabItem("颜色") then
+        elseif State.activeTab == 4 then
 
             State.useMoogleDrawer = GUI:Checkbox("使用默认配色 (MoogleDrawer)##ArgusMoogle", State.useMoogleDrawer)
             if GUI:IsItemHovered() then
@@ -1436,13 +1469,7 @@ M.DrawArgusBuilderUI = function()
             GUI:Unindent(5)
         end
 
-        GUI:EndTabItem()
-        end -- Tab2
-
-        -- ========================================
-        -- Tab 3: 代码 / 组合
-        -- ========================================
-        if GUI:BeginTabItem("代码") then
+        elseif State.activeTab == 5 then
 
         -- 操作按钮 (单体生成)
         T.SubHeader("单体绘图")
@@ -1672,13 +1699,7 @@ M.DrawArgusBuilderUI = function()
             GUI:Unindent(5)
         end
 
-        GUI:EndTabItem()
-        end -- Tab3
-
-        -- ========================================
-        -- Tab 4: ME 触发器
-        -- ========================================
-        if GUI:BeginTabItem("ME触发器") then
+        elseif State.activeTab == 6 then
 
             -- 代码模式
             local meModeNames = { "TensorReactions OnMapEffect", "Argus.registerOnMapEffect" }
@@ -1791,11 +1812,7 @@ M.DrawArgusBuilderUI = function()
                 GUI:PopStyleColor(1)
             end
 
-        GUI:EndTabItem()
-        end -- Tab4
-
-        GUI:EndTabBar()
-        end -- TabBar
+        end -- activeTab
 
     end
 
