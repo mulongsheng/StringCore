@@ -7,62 +7,23 @@ local M = StringGuide
 if not M then return end
 
 -- =============================================
--- AIMWARE 红色半透明主题
+-- 主题色
 -- =============================================
 local C = {
-    title    = { 0.95, 0.30, 0.30, 1.0 },   -- 红色标题
-    accent   = { 0.90, 0.25, 0.25, 1.0 },   -- 红色强调
-    success  = { 0.35, 0.85, 0.40, 1.0 },   -- 绿色(运行状态)
-    danger   = { 0.95, 0.25, 0.25, 1.0 },   -- 红色(停止/警告)
-    muted    = { 0.50, 0.48, 0.48, 1.0 },   -- 暗灰
-    white    = { 0.85, 0.83, 0.83, 1.0 },   -- 浅灰正文
-    hint     = { 0.60, 0.55, 0.55, 1.0 },   -- 提示文字
-    section  = { 0.80, 0.28, 0.28, 1.0 },   -- 区域小标题
-    -- 按钮预设
-    btnRun   = { 0.18, 0.58, 0.30, 0.90 },
-    btnRunH  = { 0.25, 0.72, 0.40, 0.95 },
-    btnRunA  = { 0.12, 0.48, 0.22, 1.00 },
-    btnStop  = { 0.72, 0.18, 0.18, 0.90 },
-    btnStopH = { 0.85, 0.25, 0.25, 1.00 },
-    btnStopA = { 0.58, 0.12, 0.12, 1.00 },
-    btnSend  = { 0.55, 0.20, 0.20, 0.85 },
-    btnSendH = { 0.70, 0.28, 0.28, 0.95 },
-    btnSendA = { 0.45, 0.15, 0.15, 1.00 },
+    title    = { 0.95, 0.75, 0.20, 1.0 },
+    accent   = { 0.40, 0.75, 1.00, 1.0 },
+    success  = { 0.30, 0.90, 0.40, 1.0 },
+    danger   = { 1.00, 0.40, 0.40, 1.0 },
+    muted    = { 0.55, 0.55, 0.55, 1.0 },
+    white    = { 0.90, 0.90, 0.90, 1.0 },
 }
 
-local THEME_COLOR_COUNT = 18  -- Push/Pop 数量
-
-local function PushTheme()
-    GUI:PushStyleColor(GUI.Col_WindowBg,       0.08, 0.06, 0.07, 0.92)
-    GUI:PushStyleColor(GUI.Col_ChildBg,        0.10, 0.08, 0.09, 0.60)
-    GUI:PushStyleColor(GUI.Col_FrameBg,        0.16, 0.10, 0.11, 0.85)
-    GUI:PushStyleColor(GUI.Col_FrameBgHovered, 0.28, 0.14, 0.14, 0.90)
-    GUI:PushStyleColor(GUI.Col_FrameBgActive,  0.35, 0.16, 0.16, 1.00)
-    GUI:PushStyleColor(GUI.Col_Header,         0.55, 0.12, 0.12, 0.80)
-    GUI:PushStyleColor(GUI.Col_HeaderHovered,  0.70, 0.18, 0.18, 0.85)
-    GUI:PushStyleColor(GUI.Col_HeaderActive,   0.80, 0.20, 0.20, 0.90)
-    GUI:PushStyleColor(GUI.Col_Button,         0.50, 0.12, 0.12, 0.80)
-    GUI:PushStyleColor(GUI.Col_ButtonHovered,  0.65, 0.18, 0.18, 0.90)
-    GUI:PushStyleColor(GUI.Col_ButtonActive,   0.75, 0.22, 0.22, 1.00)
-    GUI:PushStyleColor(GUI.Col_Separator,      0.50, 0.14, 0.14, 0.60)
-    GUI:PushStyleColor(GUI.Col_Border,         0.45, 0.12, 0.12, 0.40)
-    GUI:PushStyleColor(GUI.Col_Text,           0.85, 0.83, 0.83, 1.00)
-    GUI:PushStyleColor(GUI.Col_TextDisabled,   0.50, 0.48, 0.48, 1.00)
-    GUI:PushStyleColor(GUI.Col_CheckMark,      0.90, 0.28, 0.28, 1.00)
-    GUI:PushStyleColor(GUI.Col_SliderGrab,     0.70, 0.20, 0.20, 0.90)
-    GUI:PushStyleColor(GUI.Col_ScrollbarGrab,  0.45, 0.14, 0.14, 0.70)
-end
-
-local function PopTheme()
-    GUI:PopStyleColor(THEME_COLOR_COUNT)
-end
-
--- ResourceType 配置 (红色主题下的区分色)
+-- ResourceType 配置
 local TypeConfig = {
-    [2] = { name = "Model",  color = { 0.70, 0.80, 0.95, 1.0 } },
-    [4] = { name = "VFX",    color = { 0.95, 0.65, 0.35, 1.0 } },
-    [6] = { name = "Script", color = { 0.75, 0.90, 0.75, 1.0 } },
-    [7] = { name = "Sound",  color = { 0.95, 0.85, 0.50, 1.0 } },
+    [2] = { name = "Model",  color = { 0.55, 0.80, 1.00, 1.0 } },
+    [4] = { name = "VFX",    color = { 1.00, 0.55, 0.20, 1.0 } },
+    [6] = { name = "Script", color = { 0.30, 1.00, 0.60, 1.0 } },
+    [7] = { name = "Sound",  color = { 1.00, 0.85, 0.25, 1.0 } },
 }
 
 local function GetTypeName(t)
@@ -498,9 +459,9 @@ local function DrawDetailPanel(entry)
     end
     GUI:SameLine(0, 8)
     -- 发送到 Argus 代码生成器
-    GUI:PushStyleColor(GUI.Col_Button, C.btnSend[1], C.btnSend[2], C.btnSend[3], C.btnSend[4])
-    GUI:PushStyleColor(GUI.Col_ButtonHovered, C.btnSendH[1], C.btnSendH[2], C.btnSendH[3], C.btnSendH[4])
-    GUI:PushStyleColor(GUI.Col_ButtonActive, C.btnSendA[1], C.btnSendA[2], C.btnSendA[3], C.btnSendA[4])
+    GUI:PushStyleColor(GUI.Col_Button, 0.3, 0.5, 0.8, 0.9)
+    GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.4, 0.6, 0.9, 1.0)
+    GUI:PushStyleColor(GUI.Col_ButtonActive, 0.2, 0.4, 0.7, 1.0)
     if GUI:Button("发送到生成器##sendToBuilder" .. tostring(entry.index), 140, 25) then
         M._mapEffectTransfer = {
             a1 = entry.index,
@@ -526,7 +487,6 @@ end
 -- 主绘制函数
 -- =============================================
 M.DrawMapEffectUI = function()
-    PushTheme()
     GUI:SetNextWindowSize(700, 550, GUI.SetCond_Appearing)
     M.MapEffectUI.visible, M.MapEffectUI.open = GUI:Begin("Map Effect 查看器###MapEffectWindow", M.MapEffectUI.open)
 
@@ -606,9 +566,9 @@ M.DrawMapEffectUI = function()
                 GUI:TextColored(C.success[1], C.success[2], C.success[3], C.success[4],
                     "共 " .. #State.runningEffects .. " 个")
                 GUI:SameLine(0, 10)
-                GUI:PushStyleColor(GUI.Col_Button, C.btnStop[1], C.btnStop[2], C.btnStop[3], C.btnStop[4])
-                GUI:PushStyleColor(GUI.Col_ButtonHovered, C.btnStopH[1], C.btnStopH[2], C.btnStopH[3], C.btnStopH[4])
-                GUI:PushStyleColor(GUI.Col_ButtonActive, C.btnStopA[1], C.btnStopA[2], C.btnStopA[3], C.btnStopA[4])
+                GUI:PushStyleColor(GUI.Col_Button, 0.7, 0.2, 0.2, 0.9)
+                GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.8, 0.3, 0.3, 1.0)
+                GUI:PushStyleColor(GUI.Col_ButtonActive, 0.6, 0.15, 0.15, 1.0)
                 if GUI:Button("全部停止##runningStopAll", 80, 22) then
                     for _, re in ipairs(State.runningEffects) do
                         local res = Argus.getMapEffectResource(re.index)
@@ -733,9 +693,9 @@ M.DrawMapEffectUI = function()
                 GUI:SetTooltip("根据 Flag 反向查询 Index")
             end
             GUI:Spacing()
-            GUI:PushStyleColor(GUI.Col_Button, C.btnSend[1], C.btnSend[2], C.btnSend[3], C.btnSend[4])
-            GUI:PushStyleColor(GUI.Col_ButtonHovered, C.btnSendH[1], C.btnSendH[2], C.btnSendH[3], C.btnSendH[4])
-            GUI:PushStyleColor(GUI.Col_ButtonActive, C.btnSendA[1], C.btnSendA[2], C.btnSendA[3], C.btnSendA[4])
+            GUI:PushStyleColor(GUI.Col_Button, 0.3, 0.5, 0.8, 0.9)
+            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.4, 0.6, 0.9, 1.0)
+            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.2, 0.4, 0.7, 1.0)
             if GUI:Button("发送到生成器##runMESend", 130, 25) then
                 M._mapEffectTransfer = {
                     a1 = State.runIndex,
@@ -833,9 +793,9 @@ M.DrawMapEffectUI = function()
 
                     if runningIdx then
                         -- 正在运行 → 红色停止按钮
-                        GUI:PushStyleColor(GUI.Col_Button, C.btnStop[1], C.btnStop[2], C.btnStop[3], C.btnStop[4])
-                        GUI:PushStyleColor(GUI.Col_ButtonHovered, C.btnStopH[1], C.btnStopH[2], C.btnStopH[3], C.btnStopH[4])
-                        GUI:PushStyleColor(GUI.Col_ButtonActive, C.btnStopA[1], C.btnStopA[2], C.btnStopA[3], C.btnStopA[4])
+                        GUI:PushStyleColor(GUI.Col_Button, 0.75, 0.20, 0.20, 0.9)
+                        GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.85, 0.30, 0.30, 1.0)
+                        GUI:PushStyleColor(GUI.Col_ButtonActive, 0.60, 0.15, 0.15, 1.0)
                         if GUI:Button("x##run" .. entry.index, 22, 18) then
                             local res = Argus.getMapEffectResource(entry.index)
                             if res then
@@ -856,9 +816,9 @@ M.DrawMapEffectUI = function()
                         end
                     else
                         -- 未运行 → 绿色启动按钮
-                        GUI:PushStyleColor(GUI.Col_Button, C.btnRun[1], C.btnRun[2], C.btnRun[3], C.btnRun[4])
-                        GUI:PushStyleColor(GUI.Col_ButtonHovered, C.btnRunH[1], C.btnRunH[2], C.btnRunH[3], C.btnRunH[4])
-                        GUI:PushStyleColor(GUI.Col_ButtonActive, C.btnRunA[1], C.btnRunA[2], C.btnRunA[3], C.btnRunA[4])
+                        GUI:PushStyleColor(GUI.Col_Button, 0.20, 0.65, 0.35, 0.85)
+                        GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.30, 0.80, 0.45, 0.95)
+                        GUI:PushStyleColor(GUI.Col_ButtonActive, 0.15, 0.55, 0.25, 1.0)
                         if GUI:Button(">##run" .. entry.index, 22, 18) then
                             if Argus and Argus.runMapEffect then
                                 local flag = 0
@@ -881,9 +841,9 @@ M.DrawMapEffectUI = function()
                     -- 同行添加展开按钮
                     GUI:SameLine(0, 3)
                     local expandLabel = (State.selectedIndex == entry.index) and "-" or "+"
-                    GUI:PushStyleColor(GUI.Col_Button, 0.22, 0.14, 0.14, 0.60)
-                    GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.35, 0.18, 0.18, 0.75)
-                    GUI:PushStyleColor(GUI.Col_ButtonActive, 0.45, 0.22, 0.22, 0.90)
+                    GUI:PushStyleColor(GUI.Col_Button, 0.30, 0.30, 0.35, 0.7)
+                    GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.40, 0.40, 0.50, 0.85)
+                    GUI:PushStyleColor(GUI.Col_ButtonActive, 0.25, 0.25, 0.30, 1.0)
                     if GUI:Button(expandLabel .. "##expand" .. entry.index, 22, 18) then
                         if State.selectedIndex == entry.index then
                             State.selectedIndex = -1
@@ -916,7 +876,6 @@ M.DrawMapEffectUI = function()
     end
 
     GUI:End()
-    PopTheme()
 end
 
 d("[StringCore] MapEffectUI.lua 加载完成")
