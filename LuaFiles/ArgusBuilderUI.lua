@@ -1087,19 +1087,18 @@ M.DrawArgusBuilderUI = function()
             local tabs = { "特效列表", "执行控制", "形状参数", "颜色", "代码", "ME触发器" }
             for i, name in ipairs(tabs) do
                 if i > 1 then GUI:SameLine(0, 2) end
-                if State.activeTab == i then
-                    GUI:PushStyleColor(GUI.Col_Button, 0.75, 0.22, 0.22, 1.00)
-                    GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.80, 0.28, 0.28, 1.00)
-                    GUI:PushStyleColor(GUI.Col_ButtonActive, 0.85, 0.30, 0.30, 1.00)
-                else
-                    GUI:PushStyleColor(GUI.Col_Button, 0.22, 0.15, 0.15, 0.80)
-                    GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.35, 0.18, 0.18, 0.90)
-                    GUI:PushStyleColor(GUI.Col_ButtonActive, 0.50, 0.20, 0.20, 1.00)
+                local isActive = (State.activeTab == i)
+                if isActive then
+                    GUI:PushStyleColor(GUI.Col_Button, 0.26, 0.59, 0.98, 0.80)
+                    GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.26, 0.59, 0.98, 0.90)
+                    GUI:PushStyleColor(GUI.Col_ButtonActive, 0.06, 0.53, 0.98, 1.00)
                 end
                 if GUI:Button(name .. "##ABTab" .. i, 0, 24) then
                     State.activeTab = i
                 end
-                GUI:PopStyleColor(3)
+                if isActive then
+                    GUI:PopStyleColor(3)
+                end
             end
         end
         GUI:Separator()

@@ -14,52 +14,35 @@ local T = M.UITheme
 -- =============================================
 T.C = {
     -- 文字
-    title    = { 0.95, 0.30, 0.30, 1.0 },   -- 红色标题
-    accent   = { 0.90, 0.25, 0.25, 1.0 },   -- 红色强调
+    title    = { 0.40, 0.70, 1.00, 1.0 },   -- 蓝色标题
+    accent   = { 0.40, 0.70, 1.00, 1.0 },   -- 蓝色强调
     success  = { 0.35, 0.85, 0.40, 1.0 },   -- 绿色(运行)
     danger   = { 0.95, 0.25, 0.25, 1.0 },   -- 红色(停止)
-    muted    = { 0.50, 0.48, 0.48, 1.0 },   -- 暗灰
-    white    = { 0.85, 0.83, 0.83, 1.0 },   -- 浅灰正文
-    hint     = { 0.60, 0.55, 0.55, 1.0 },   -- 提示文字
-    section  = { 0.80, 0.28, 0.28, 1.0 },   -- 区域小标题
+    muted    = { 0.50, 0.50, 0.50, 1.0 },   -- 暗灰
+    white    = { 1.00, 1.00, 1.00, 1.0 },   -- 白色正文
+    hint     = { 0.60, 0.60, 0.60, 1.0 },   -- 提示文字
+    section  = { 0.45, 0.70, 0.95, 1.0 },   -- 区域小标题
     gold     = { 1.00, 0.80, 0.20, 1.0 },   -- 金色(高亮)
-    link     = { 0.70, 0.55, 0.90, 1.0 },   -- 链接/可交互
+    link     = { 0.55, 0.65, 0.95, 1.0 },   -- 链接/可交互
 
     -- 按钮预设 (组合: normal/hovered/active)
     btnRun   = { { 0.18, 0.58, 0.30, 0.90 }, { 0.25, 0.72, 0.40, 0.95 }, { 0.12, 0.48, 0.22, 1.00 } },
     btnStop  = { { 0.72, 0.18, 0.18, 0.90 }, { 0.85, 0.25, 0.25, 1.00 }, { 0.58, 0.12, 0.12, 1.00 } },
-    btnSend  = { { 0.55, 0.20, 0.20, 0.85 }, { 0.70, 0.28, 0.28, 0.95 }, { 0.45, 0.15, 0.15, 1.00 } },
-    btnPrimary = { { 0.50, 0.12, 0.12, 0.85 }, { 0.65, 0.18, 0.18, 0.95 }, { 0.75, 0.22, 0.22, 1.00 } },
+    btnSend  = { { 0.20, 0.45, 0.68, 0.85 }, { 0.28, 0.55, 0.78, 0.95 }, { 0.15, 0.38, 0.60, 1.00 } },
+    btnPrimary = { { 0.26, 0.52, 0.85, 0.85 }, { 0.32, 0.60, 0.92, 0.95 }, { 0.20, 0.46, 0.78, 1.00 } },
 }
 
 -- =============================================
 -- 窗口级主题 Push/Pop
 -- =============================================
-local THEME_COLOR_COUNT = 18
+local THEME_COLOR_COUNT = 0
 
 T.PushTheme = function()
-    GUI:PushStyleColor(GUI.Col_WindowBg,       0.08, 0.06, 0.07, 0.92)
-    GUI:PushStyleColor(GUI.Col_ChildBg,        0.10, 0.08, 0.09, 0.60)
-    GUI:PushStyleColor(GUI.Col_FrameBg,        0.16, 0.10, 0.11, 0.85)
-    GUI:PushStyleColor(GUI.Col_FrameBgHovered, 0.28, 0.14, 0.14, 0.90)
-    GUI:PushStyleColor(GUI.Col_FrameBgActive,  0.35, 0.16, 0.16, 1.00)
-    GUI:PushStyleColor(GUI.Col_Header,         0.55, 0.12, 0.12, 0.80)
-    GUI:PushStyleColor(GUI.Col_HeaderHovered,  0.70, 0.18, 0.18, 0.85)
-    GUI:PushStyleColor(GUI.Col_HeaderActive,   0.80, 0.20, 0.20, 0.90)
-    GUI:PushStyleColor(GUI.Col_Button,         0.50, 0.12, 0.12, 0.80)
-    GUI:PushStyleColor(GUI.Col_ButtonHovered,  0.65, 0.18, 0.18, 0.90)
-    GUI:PushStyleColor(GUI.Col_ButtonActive,   0.75, 0.22, 0.22, 1.00)
-    GUI:PushStyleColor(GUI.Col_Separator,      0.50, 0.14, 0.14, 0.60)
-    GUI:PushStyleColor(GUI.Col_Border,         0.45, 0.12, 0.12, 0.40)
-    GUI:PushStyleColor(GUI.Col_Text,           0.85, 0.83, 0.83, 1.00)
-    GUI:PushStyleColor(GUI.Col_TextDisabled,   0.50, 0.48, 0.48, 1.00)
-    GUI:PushStyleColor(GUI.Col_CheckMark,      0.90, 0.28, 0.28, 1.00)
-    GUI:PushStyleColor(GUI.Col_SliderGrab,     0.70, 0.20, 0.20, 0.90)
-    GUI:PushStyleColor(GUI.Col_ScrollbarGrab,  0.45, 0.14, 0.14, 0.70)
+    -- 使用默认主题，不推送任何颜色
 end
 
 T.PopTheme = function()
-    GUI:PopStyleColor(THEME_COLOR_COUNT)
+    -- 无需弹出
 end
 
 -- =============================================
