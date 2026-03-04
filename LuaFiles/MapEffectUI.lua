@@ -1,38 +1,22 @@
 -- =============================================
--- MapEffectUI - 地图特效查看器
--- 使用 Argus API 获取并展示当前地图上的所有特效信息
+-- MapEffectUI - 地图特效查看器 (AIMWARE 风格)
+-- TabBar 布局: 特效列表 | 执行控制
 -- =============================================
 
 local M = StringGuide
 if not M then return end
 
--- =============================================
--- 主题色
--- =============================================
-local C = {
-    title    = { 0.95, 0.75, 0.20, 1.0 },
-    accent   = { 0.40, 0.75, 1.00, 1.0 },
-    success  = { 0.30, 0.90, 0.40, 1.0 },
-    danger   = { 1.00, 0.40, 0.40, 1.0 },
-    muted    = { 0.55, 0.55, 0.55, 1.0 },
-    white    = { 0.90, 0.90, 0.90, 1.0 },
-}
-
--- ResourceType 配置
-local TypeConfig = {
-    [2] = { name = "Model",  color = { 0.55, 0.80, 1.00, 1.0 } },
-    [4] = { name = "VFX",    color = { 1.00, 0.55, 0.20, 1.0 } },
-    [6] = { name = "Script", color = { 0.30, 1.00, 0.60, 1.0 } },
-    [7] = { name = "Sound",  color = { 1.00, 0.85, 0.25, 1.0 } },
-}
+local T = M.UITheme
+local C = T.C
+local TC = T.TypeConfig
 
 local function GetTypeName(t)
-    local c = TypeConfig[t]
+    local c = TC[t]
     return c and c.name or ("Unknown(" .. tostring(t) .. ")")
 end
 
 local function GetTypeColor(t)
-    local c = TypeConfig[t]
+    local c = TC[t]
     return c and c.color or C.muted
 end
 
@@ -64,7 +48,7 @@ local State = {
 }
 
 -- =============================================
--- 右键复制
+-- 工具函数
 -- =============================================
 local function CopyToClipboard(text)
     if GUI and GUI.SetClipboardText then
@@ -74,16 +58,12 @@ local function CopyToClipboard(text)
 end
 
 local function RightClickCopy(text)
-    if GUI:IsItemClicked(1) then
-        CopyToClipboard(text)
-    end
-    if GUI:IsItemHovered() then
-        GUI:SetTooltip("右键复制")
-    end
+    if GUI:IsItemClicked(1) then CopyToClipboard(text) end
+    if GUI:IsItemHovered() then GUI:SetTooltip("右键复制") end
 end
 
 -- =============================================
--- 刷新特效数据（直接逐个获取，最兼容）
+-- 刷新特效数据
 -- =============================================
 local function RefreshEffects()
     State.effects = {}
@@ -95,22 +75,14 @@ local function RefreshEffects()
     for i = 0, numEffects - 1 do
         local res = Argus.getMapEffectResource(i)
         if not res then
-            -- 资源不可用，仍然加入列表以保持索引完整
             table.insert(State.effects, {
-                index = i,
-                resource = nil,
-                id = 0,
-                path = "(资源不可用)",
-                type = -1,
-                isActive = false,
+                index = i, resource = nil, id = 0, path = "(资源不可用)",
+                type = -1, isActive = false,
                 position = { x = 0, y = 0, z = 0 },
                 scale = { x = 1, y = 1, z = 1 },
                 orientation = { dir = { x = 0, y = 0, z = 0 }, up = { x = 0, y = 1, z = 0 } },
-                renderType = nil,
-                renderState = nil,
-                scripts = {},
-                subresources = {},
-                unavailable = true,
+                renderType = nil, renderState = nil,
+                scripts = {}, subresources = {}, unavailable = true,
             })
         end
         if res then
@@ -121,11 +93,8 @@ local function RefreshEffects()
             local dx, dy, dz, ux, uy, uz = Argus.getEffectResourceOrientation(res)
 
             local entry = {
-                index = i,
-                resource = res,
-                id = resId or 0,
-                path = resPath or "",
-                type = resType or 0,
+                index = i, resource = res,
+                id = resId or 0, path = resPath or "", type = resType or 0,
                 isActive = isActive or false,
                 position = { x = px or 0, y = py or 0, z = pz or 0 },
                 scale = { x = sx or 1, y = sy or 1, z = sz or 1 },
@@ -133,55 +102,50 @@ local function RefreshEffects()
                     dir = { x = dx or 0, y = dy or 0, z = dz or 0 },
                     up = { x = ux or 0, y = uy or 1, z = uz or 0 },
                 },
-                renderType = renderType,
-                renderState = renderState,
-                scripts = {},
-                subresources = {},
+                renderType = renderType, renderState = renderState,
+                scripts = {}, subresources = {},
             }
 
-                -- Script 类型获取脚本和子资源
-                if resType == 6 then
-                    local numScripts = Argus.getNumEffectResourceScripts(res)
-                    for si = 0, numScripts - 1 do
-                        local sName, numSub, scriptRes, isRunning = Argus.getEffectResourceScriptInfo(res, si)
-                        local scriptEntry = {
-                            index = si, name = sName or "unknown",
-                            numSubresources = numSub, scriptResource = scriptRes,
-                            isRunning = isRunning, subresources = {},
-                        }
-                        if scriptRes and numSub and numSub > 0 then
-                            for subi = 0, numSub - 1 do
-                                local subRes = Argus.getEffectResourceScriptSubresource(scriptRes, subi)
-                                if subRes then
-                                    local subId, subPath, subType, subActive = Argus.getEffectResourceInfo(subRes)
-                                    local spx, spy, spz = Argus.getEffectResourcePosition(subRes)
-                                    table.insert(scriptEntry.subresources, {
-                                        index = subi, resource = subRes, id = subId,
-                                        path = subPath or "", type = subType, isActive = subActive,
-                                        position = { x = spx or 0, y = spy or 0, z = spz or 0 },
-                                    })
-                                end
+            if resType == 6 then
+                local numScripts = Argus.getNumEffectResourceScripts(res)
+                for si = 0, numScripts - 1 do
+                    local sName, numSub, scriptRes, isRunning = Argus.getEffectResourceScriptInfo(res, si)
+                    local scriptEntry = {
+                        index = si, name = sName or "unknown",
+                        numSubresources = numSub, scriptResource = scriptRes,
+                        isRunning = isRunning, subresources = {},
+                    }
+                    if scriptRes and numSub and numSub > 0 then
+                        for subi = 0, numSub - 1 do
+                            local subRes = Argus.getEffectResourceScriptSubresource(scriptRes, subi)
+                            if subRes then
+                                local subId, subPath, subType, subActive = Argus.getEffectResourceInfo(subRes)
+                                local spx, spy, spz = Argus.getEffectResourcePosition(subRes)
+                                table.insert(scriptEntry.subresources, {
+                                    index = subi, resource = subRes, id = subId,
+                                    path = subPath or "", type = subType, isActive = subActive,
+                                    position = { x = spx or 0, y = spy or 0, z = spz or 0 },
+                                })
                             end
                         end
-                        table.insert(entry.scripts, scriptEntry)
                     end
-
-                    local numFullSub = Argus.getNumEffectSubresources(res)
-                    for fi = 0, numFullSub - 1 do
-                        local fRes = Argus.getEffectSubresource(res, fi)
-                        if fRes then
-                            local fId, fPath, fType, fActive = Argus.getEffectResourceInfo(fRes)
-                            local fpx, fpy, fpz = Argus.getEffectResourcePosition(fRes)
-                            table.insert(entry.subresources, {
-                                index = fi, resource = fRes, id = fId,
-                                path = fPath or "", type = fType, isActive = fActive,
-                                position = { x = fpx or 0, y = fpy or 0, z = fpz or 0 },
-                            })
-                        end
+                    table.insert(entry.scripts, scriptEntry)
+                end
+                local numFullSub = Argus.getNumEffectSubresources(res)
+                for fi = 0, numFullSub - 1 do
+                    local fRes = Argus.getEffectSubresource(res, fi)
+                    if fRes then
+                        local fId, fPath, fType, fActive = Argus.getEffectResourceInfo(fRes)
+                        local fpx, fpy, fpz = Argus.getEffectResourcePosition(fRes)
+                        table.insert(entry.subresources, {
+                            index = fi, resource = fRes, id = fId,
+                            path = fPath or "", type = fType, isActive = fActive,
+                            position = { x = fpx or 0, y = fpy or 0, z = fpz or 0 },
+                        })
                     end
                 end
-
-                table.insert(State.effects, entry)
+            end
+            table.insert(State.effects, entry)
         end
     end
 end
@@ -190,7 +154,6 @@ end
 -- 过滤
 -- =============================================
 local function MatchesFilter(entry)
-    -- 不可用条目：类型过滤时如果选了具体类型则隐藏，否则显示
     if entry.unavailable then
         if State.filterType ~= 0 then return false end
         if State.filterText ~= "" then
@@ -210,7 +173,7 @@ local function MatchesFilter(entry)
 end
 
 -- =============================================
--- 构建完整摘要（用于复制）
+-- 构建摘要 (用于复制)
 -- =============================================
 local function BuildEntrySummary(entry)
     local lines = {}
@@ -224,14 +187,10 @@ local function BuildEntrySummary(entry)
     table.insert(lines, string.format("Orientation: Dir(%.3f,%.3f,%.3f) Up(%.3f,%.3f,%.3f)",
         entry.orientation.dir.x, entry.orientation.dir.y, entry.orientation.dir.z,
         entry.orientation.up.x, entry.orientation.up.y, entry.orientation.up.z))
-    table.insert(lines, "RenderType: " .. GetTypeName(entry.renderType or 0) .. " (" .. tostring(entry.renderType) .. ")")
-    table.insert(lines, "RenderState: " .. tostring(entry.renderState))
-
     if Argus.getEffectResourceScriptFlagForIndex then
         local flag = Argus.getEffectResourceScriptFlagForIndex(entry.index)
         if flag then table.insert(lines, "ScriptFlag: " .. tostring(flag)) end
     end
-
     if entry.type == 6 then
         if #entry.scripts > 0 then
             table.insert(lines, "--- Scripts (" .. #entry.scripts .. ") ---")
@@ -254,7 +213,6 @@ local function BuildEntrySummary(entry)
             end
         end
     end
-
     return table.concat(lines, "\n")
 end
 
@@ -265,70 +223,82 @@ local function DrawSubresourceRow(sub, prefix)
     local col = GetTypeColor(sub.type)
     GUI:TextColored(col[1], col[2], col[3], col[4], prefix .. GetTypeName(sub.type))
     GUI:SameLine(0, 5)
-    GUI:TextColored(0.7, 0.7, 0.7, 1.0,
+    GUI:TextColored(C.white[1], C.white[2], C.white[3], C.white[4],
         string.format("ID:%d  Pos:(%.1f, %.1f, %.1f)  %s",
             sub.id or 0, sub.position.x, sub.position.y, sub.position.z,
             sub.isActive and "Active" or "Inactive"))
     if sub.path ~= "" then
         local shortPath = string.match(sub.path, "[^/\\]+$") or sub.path
         GUI:SameLine(0, 5)
-        GUI:TextColored(0.5, 0.5, 0.5, 1.0, shortPath)
+        GUI:TextColored(C.muted[1], C.muted[2], C.muted[3], C.muted[4], shortPath)
         if GUI:IsItemHovered() then GUI:SetTooltip(sub.path) end
     end
-    -- 右键复制子资源路径
     if GUI:IsItemClicked(1) then CopyToClipboard(sub.path) end
 end
 
 -- =============================================
--- 绘制详情面板（展开在条目下方）
+-- 停止特效 (通用逻辑)
+-- =============================================
+local function StopEffect(index)
+    local res = Argus.getMapEffectResource(index)
+    if res then
+        local _, _, resType, _ = Argus.getEffectResourceInfo(res)
+        if resType == 6 then
+            local numScripts = Argus.getNumEffectResourceScripts(res)
+            local stopped = false
+            for si = 0, numScripts - 1 do
+                local sName, _, _, _ = Argus.getEffectResourceScriptInfo(res, si)
+                if sName and string.find(sName, "_off") then
+                    Argus.startEffectResourceScript(res, si, 0)
+                    stopped = true
+                end
+            end
+            if not stopped then
+                for si = 0, numScripts - 1 do
+                    Argus.stopEffectResourceScript(res, si)
+                end
+            end
+        end
+    end
+end
+
+-- =============================================
+-- 详情面板 (展开在条目下方)
 -- =============================================
 local function DrawDetailPanel(entry)
+    GUI:Indent(20)
     GUI:Separator()
-    GUI:Spacing()
-    GUI:TextColored(C.title[1], C.title[2], C.title[3], C.title[4], "===== 特效详情 =====")
-    GUI:Spacing()
 
     -- 基本信息
-    GUI:Text("索引: " .. tostring(entry.index))
-    GUI:Text("资源 ID: " .. tostring(entry.id))
-
+    T.SubHeader("基本信息")
+    GUI:Text("索引: " .. tostring(entry.index) .. "  |  资源 ID: " .. tostring(entry.id))
     local col = GetTypeColor(entry.type)
     GUI:Text("类型: ")
     GUI:SameLine(0, 0)
     GUI:TextColored(col[1], col[2], col[3], col[4], GetTypeName(entry.type))
-
+    GUI:SameLine(0, 10)
     GUI:Text("状态: ")
     GUI:SameLine(0, 0)
-    if entry.isActive then
-        GUI:TextColored(C.success[1], C.success[2], C.success[3], C.success[4], "Active")
-    else
-        GUI:TextColored(C.danger[1], C.danger[2], C.danger[3], C.danger[4], "Inactive")
-    end
+    if entry.isActive then T.SuccessText("Active") else T.DangerText("Inactive") end
 
-    GUI:Text("渲染类型: " .. GetTypeName(entry.renderType or 0))
-    GUI:Text("渲染状态: " .. tostring(entry.renderState or 0))
+    GUI:Text("渲染: " .. GetTypeName(entry.renderType or 0) .. " | State: " .. tostring(entry.renderState or 0))
 
-    -- Flag / Index 转换
     if Argus.getEffectResourceScriptFlagForIndex then
         local flag = Argus.getEffectResourceScriptFlagForIndex(entry.index)
         local idxFromFlag = Argus.getEffectResourceScriptIndexForFlag(flag)
-        GUI:Text("Script Flag: " .. tostring(flag) .. "  (Flag→Index: " .. tostring(idxFromFlag) .. ")")
+        GUI:Text("Script Flag: " .. tostring(flag) .. "  (Flag>Index: " .. tostring(idxFromFlag) .. ")")
     end
 
-    -- 路径
     GUI:Text("路径: ")
     GUI:SameLine(0, 0)
     GUI:TextColored(C.accent[1], C.accent[2], C.accent[3], C.accent[4], entry.path ~= "" and entry.path or "(无)")
     RightClickCopy(entry.path)
 
     GUI:Spacing()
-    GUI:Separator()
 
-    -- =============================================
-    -- 位置编辑
-    -- =============================================
-    GUI:TextColored(C.title[1], C.title[2], C.title[3], C.title[4], "位置:")
-    GUI:Text(string.format("  当前: X=%.3f  Y=%.3f  Z=%.3f", entry.position.x, entry.position.y, entry.position.z))
+    -- 位置/缩放/朝向编辑
+    T.SubHeader("位置 / 缩放 / 朝向")
+    GUI:Text(string.format("Pos: %.3f, %.3f, %.3f", entry.position.x, entry.position.y, entry.position.z))
     RightClickCopy(string.format("%.3f, %.3f, %.3f", entry.position.x, entry.position.y, entry.position.z))
 
     if State.editingEntry ~= entry.index then
@@ -339,86 +309,58 @@ local function DrawDetailPanel(entry)
         State.editOrientUp = { x = entry.orientation.up.x, y = entry.orientation.up.y, z = entry.orientation.up.z }
     end
 
-    GUI:PushItemWidth(80)
+    GUI:PushItemWidth(70)
     State.editPos.x = GUI:InputFloat("X##pos", State.editPos.x, 0.1, 1.0)
     GUI:SameLine()
     State.editPos.y = GUI:InputFloat("Y##pos", State.editPos.y, 0.1, 1.0)
     GUI:SameLine()
     State.editPos.z = GUI:InputFloat("Z##pos", State.editPos.z, 0.1, 1.0)
-    GUI:PopItemWidth()
     GUI:SameLine()
-    if GUI:Button("应用位置##setpos") then
+    if GUI:Button("应用##setpos") then
         Argus.setEffectResourcePosition(entry.resource, State.editPos.x, State.editPos.y, State.editPos.z)
     end
 
-    GUI:Spacing()
-
-    -- 缩放编辑
-    GUI:TextColored(C.title[1], C.title[2], C.title[3], C.title[4], "缩放:")
-    GUI:Text(string.format("  当前: X=%.3f  Y=%.3f  Z=%.3f", entry.scale.x, entry.scale.y, entry.scale.z))
-    RightClickCopy(string.format("%.3f, %.3f, %.3f", entry.scale.x, entry.scale.y, entry.scale.z))
-
-    GUI:PushItemWidth(80)
+    GUI:Text(string.format("Scale: %.3f, %.3f, %.3f", entry.scale.x, entry.scale.y, entry.scale.z))
     State.editScale.x = GUI:InputFloat("X##scale", State.editScale.x, 0.1, 1.0)
     GUI:SameLine()
     State.editScale.y = GUI:InputFloat("Y##scale", State.editScale.y, 0.1, 1.0)
     GUI:SameLine()
     State.editScale.z = GUI:InputFloat("Z##scale", State.editScale.z, 0.1, 1.0)
-    GUI:PopItemWidth()
     GUI:SameLine()
-    if GUI:Button("应用缩放##setscale") then
+    if GUI:Button("应用##setscale") then
         Argus.setEffectResourceScale(entry.resource, State.editScale.x, State.editScale.y, State.editScale.z)
     end
 
-    GUI:Spacing()
-
-    -- 朝向编辑
-    GUI:TextColored(C.title[1], C.title[2], C.title[3], C.title[4], "朝向:")
-    GUI:Text(string.format("  Dir: (%.3f, %.3f, %.3f)  Up: (%.3f, %.3f, %.3f)",
+    GUI:Text(string.format("Dir: (%.3f,%.3f,%.3f) Up: (%.3f,%.3f,%.3f)",
         entry.orientation.dir.x, entry.orientation.dir.y, entry.orientation.dir.z,
         entry.orientation.up.x, entry.orientation.up.y, entry.orientation.up.z))
-
-    GUI:Text("  Direction:")
-    GUI:PushItemWidth(70)
     State.editOrientDir.x = GUI:InputFloat("dX##ori", State.editOrientDir.x, 0.1, 1.0)
     GUI:SameLine()
     State.editOrientDir.y = GUI:InputFloat("dY##ori", State.editOrientDir.y, 0.1, 1.0)
     GUI:SameLine()
     State.editOrientDir.z = GUI:InputFloat("dZ##ori", State.editOrientDir.z, 0.1, 1.0)
-    GUI:PopItemWidth()
-
-    GUI:Text("  Up:")
-    GUI:PushItemWidth(70)
     State.editOrientUp.x = GUI:InputFloat("uX##ori", State.editOrientUp.x, 0.1, 1.0)
     GUI:SameLine()
     State.editOrientUp.y = GUI:InputFloat("uY##ori", State.editOrientUp.y, 0.1, 1.0)
     GUI:SameLine()
     State.editOrientUp.z = GUI:InputFloat("uZ##ori", State.editOrientUp.z, 0.1, 1.0)
-    GUI:PopItemWidth()
     GUI:SameLine()
-    if GUI:Button("应用朝向##setori") then
+    if GUI:Button("应用##setori") then
         Argus.setEffectResourceOrientation(entry.resource,
             State.editOrientDir.x, State.editOrientDir.y, State.editOrientDir.z,
             State.editOrientUp.x, State.editOrientUp.y, State.editOrientUp.z)
     end
+    GUI:PopItemWidth()
 
-    -- =============================================
-    -- 脚本信息（仅 Script 类型）
-    -- =============================================
+    -- 脚本信息
     if entry.type == 6 and #entry.scripts > 0 then
         GUI:Spacing()
-        GUI:Separator()
-        GUI:TextColored(C.title[1], C.title[2], C.title[3], C.title[4],
-            "脚本 (" .. #entry.scripts .. ")")
-        GUI:Spacing()
-
+        T.SubHeader("脚本 (" .. #entry.scripts .. ")")
         for _, script in ipairs(entry.scripts) do
             local statusCol = script.isRunning and C.success or C.danger
-            local statusText = script.isRunning and "运行中" or "已停止"
             GUI:TextColored(statusCol[1], statusCol[2], statusCol[3], statusCol[4],
-                string.format("  [%d] %s (%s, %d 子资源)", script.index, script.name, statusText, script.numSubresources or 0))
-
-            -- 启动/停止按钮
+                string.format("  [%d] %s (%s, %d sub)", script.index, script.name,
+                    script.isRunning and "运行中" or "已停止", script.numSubresources or 0))
             GUI:SameLine()
             if script.isRunning then
                 if GUI:Button("停止##script" .. script.index) then
@@ -429,70 +371,56 @@ local function DrawDetailPanel(entry)
                     Argus.startEffectResourceScript(entry.resource, script.index, 0)
                 end
             end
-
-            -- 脚本子资源
             for _, sub in ipairs(script.subresources) do
                 DrawSubresourceRow(sub, "      ")
             end
         end
     end
 
-    -- 全部子资源
     if entry.type == 6 and #entry.subresources > 0 then
         GUI:Spacing()
-        GUI:Separator()
-        GUI:TextColored(C.title[1], C.title[2], C.title[3], C.title[4],
-            "全部子资源 (" .. #entry.subresources .. ")")
-        GUI:Spacing()
-
+        T.SubHeader("全部子资源 (" .. #entry.subresources .. ")")
         for _, sub in ipairs(entry.subresources) do
             DrawSubresourceRow(sub, "    ")
         end
     end
 
     GUI:Spacing()
-    GUI:Separator()
 
-    -- 复制全部信息
-    if GUI:Button("复制全部信息##detail", 140, 25) then
+    -- 操作按钮
+    if GUI:Button("复制全部##detail", 90, 22) then
         CopyToClipboard(BuildEntrySummary(entry))
     end
-    GUI:SameLine(0, 8)
-    -- 发送到 Argus 代码生成器
-    GUI:PushStyleColor(GUI.Col_Button, 0.3, 0.5, 0.8, 0.9)
-    GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.4, 0.6, 0.9, 1.0)
-    GUI:PushStyleColor(GUI.Col_ButtonActive, 0.2, 0.4, 0.7, 1.0)
-    if GUI:Button("发送到生成器##sendToBuilder" .. tostring(entry.index), 140, 25) then
+    GUI:SameLine(0, 6)
+    T.PushBtn(C.btnSend)
+    if GUI:Button("发送到生成器##send" .. tostring(entry.index), 110, 22) then
         M._mapEffectTransfer = {
-            a1 = entry.index,
-            a3 = nil,
-            posX = entry.position.x,
-            posY = entry.position.y,
-            posZ = entry.position.z,
+            a1 = entry.index, a3 = nil,
+            posX = entry.position.x, posY = entry.position.y, posZ = entry.position.z,
         }
         if Argus and Argus.getEffectResourceScriptFlagForIndex then
             M._mapEffectTransfer.a3 = Argus.getEffectResourceScriptFlagForIndex(entry.index)
         end
-        if M.ArgusBuilderUI then
-            M.ArgusBuilderUI.open = true
-        end
+        if M.ArgusBuilderUI then M.ArgusBuilderUI.open = true end
         d("[MapEffect] 已发送到生成器: Index=" .. entry.index)
     end
-    GUI:PopStyleColor(3)
+    T.PopBtn()
 
-    GUI:Spacing()
+    GUI:Separator()
+    GUI:Unindent(20)
 end
 
 -- =============================================
 -- 主绘制函数
 -- =============================================
 M.DrawMapEffectUI = function()
+    T.PushTheme()
     GUI:SetNextWindowSize(700, 550, GUI.SetCond_Appearing)
     M.MapEffectUI.visible, M.MapEffectUI.open = GUI:Begin("Map Effect 查看器###MapEffectWindow", M.MapEffectUI.open)
 
     if M.MapEffectUI.visible then
 
-        -- 自动刷新逻辑（始终执行）
+        -- 自动刷新
         if State.autoRefresh then
             local now = os.clock()
             if now - State.lastRefreshTime >= State.refreshInterval then
@@ -501,381 +429,266 @@ M.DrawMapEffectUI = function()
             end
         end
 
-        -- =============================================
-        -- 刷新控制
-        -- =============================================
-        if GUI:Button("刷新##ME", 70, 22) then
-            RefreshEffects()
-        end
-        GUI:SameLine()
-        State.autoRefresh = GUI:Checkbox("自动刷新##ME", State.autoRefresh)
-        if State.autoRefresh then
-            GUI:SameLine()
-            GUI:PushItemWidth(80)
-            State.refreshInterval = GUI:InputFloat("间隔(秒)##ME", State.refreshInterval, 0.5, 1.0)
-            GUI:PopItemWidth()
-            if State.refreshInterval < 0.1 then State.refreshInterval = 0.1 end
-        end
+        -- ===== TabBar =====
+        if GUI:BeginTabBar("METabBar") then
 
-        GUI:Spacing()
+            -- ========================================
+            -- Tab 1: 特效列表
+            -- ========================================
+            if GUI:BeginTabItem("特效列表") then
 
-        -- 搜索和类型过滤
-        GUI:PushItemWidth(200)
-        State.filterText = GUI:InputText("搜索##MEFilter", State.filterText)
-        GUI:PopItemWidth()
-        GUI:SameLine(0, 15)
-        GUI:PushItemWidth(120)
-        -- 动态生成类型列表：只显示当前存在的类型
-        local typeCounts = {}
-        for _, e in ipairs(State.effects) do
-            if not e.unavailable then
-                typeCounts[e.type] = (typeCounts[e.type] or 0) + 1
-            end
-        end
-        local typeNames = { "全部" }
-        local typeValues = { 0 }
-        local sortedTypes = {}
-        for t, _ in pairs(typeCounts) do table.insert(sortedTypes, t) end
-        table.sort(sortedTypes)
-        for _, t in ipairs(sortedTypes) do
-            table.insert(typeNames, GetTypeName(t) .. "(" .. t .. ") x" .. typeCounts[t])
-            table.insert(typeValues, t)
-        end
-        local currentTypeIdx = 1
-        for idx, v in ipairs(typeValues) do
-            if v == State.filterType then currentTypeIdx = idx break end
-        end
-        local newTypeIdx = GUI:Combo("类型##METype", currentTypeIdx, typeNames)
-        if newTypeIdx ~= currentTypeIdx then
-            State.filterType = typeValues[newTypeIdx] or 0
-        end
-        GUI:PopItemWidth()
-
-        GUI:Spacing()
-        GUI:Separator()
-        GUI:Spacing()
-
-        -- =============================================
-        -- 正在执行的特效
-        -- =============================================
-        if #State.runningEffects > 0 then
-            if GUI:CollapsingHeader("正在执行的特效##MERunning") then
-                GUI:Indent(8)
-
-                -- 数量 + 全部停止按钮
-                GUI:TextColored(C.success[1], C.success[2], C.success[3], C.success[4],
-                    "共 " .. #State.runningEffects .. " 个")
+                -- 工具栏
+                if GUI:Button("刷新##ME", 55, 22) then RefreshEffects() end
+                GUI:SameLine(0, 6)
+                State.autoRefresh = GUI:Checkbox("自动##ME", State.autoRefresh)
+                if State.autoRefresh then
+                    GUI:SameLine(0, 4)
+                    GUI:PushItemWidth(60)
+                    State.refreshInterval = GUI:InputFloat("s##MEInt", State.refreshInterval, 0.5, 1.0)
+                    GUI:PopItemWidth()
+                    if State.refreshInterval < 0.1 then State.refreshInterval = 0.1 end
+                end
                 GUI:SameLine(0, 10)
-                GUI:PushStyleColor(GUI.Col_Button, 0.7, 0.2, 0.2, 0.9)
-                GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.8, 0.3, 0.3, 1.0)
-                GUI:PushStyleColor(GUI.Col_ButtonActive, 0.6, 0.15, 0.15, 1.0)
-                if GUI:Button("全部停止##runningStopAll", 80, 22) then
-                    for _, re in ipairs(State.runningEffects) do
-                        local res = Argus.getMapEffectResource(re.index)
-                        if res then
-                            local _, _, resType, _ = Argus.getEffectResourceInfo(res)
-                            if resType == 6 then
-                                local numScripts = Argus.getNumEffectResourceScripts(res)
-                                for si = 0, numScripts - 1 do
-                                    Argus.stopEffectResourceScript(res, si)
+                GUI:PushItemWidth(140)
+                State.filterText = GUI:InputText("搜索##MEF", State.filterText)
+                GUI:PopItemWidth()
+                GUI:SameLine(0, 6)
+                GUI:PushItemWidth(120)
+                -- 动态类型列表
+                local typeCounts = {}
+                for _, e in ipairs(State.effects) do
+                    if not e.unavailable then
+                        typeCounts[e.type] = (typeCounts[e.type] or 0) + 1
+                    end
+                end
+                local typeNames = { "全部" }
+                local typeValues = { 0 }
+                local sortedTypes = {}
+                for t2, _ in pairs(typeCounts) do table.insert(sortedTypes, t2) end
+                table.sort(sortedTypes)
+                for _, t2 in ipairs(sortedTypes) do
+                    table.insert(typeNames, GetTypeName(t2) .. "(" .. t2 .. ") x" .. typeCounts[t2])
+                    table.insert(typeValues, t2)
+                end
+                local currentTypeIdx = 1
+                for idx, v in ipairs(typeValues) do
+                    if v == State.filterType then currentTypeIdx = idx break end
+                end
+                local newTypeIdx = GUI:Combo("类型##MET", currentTypeIdx, typeNames)
+                if newTypeIdx ~= currentTypeIdx then
+                    State.filterType = typeValues[newTypeIdx] or 0
+                end
+                GUI:PopItemWidth()
+
+                -- 统计
+                local numTotal = Argus and Argus.getNumCurrentMapEffects and Argus.getNumCurrentMapEffects() or 0
+                local filteredCount = 0
+                for _, e in ipairs(State.effects) do
+                    if MatchesFilter(e) then filteredCount = filteredCount + 1 end
+                end
+                GUI:SameLine(0, 10)
+                T.HintText(filteredCount .. "/" .. numTotal)
+
+                GUI:Separator()
+
+                -- 列表区域 (BeginChild 可滚动)
+                GUI:BeginChild("MEList", 0, 0, false)
+
+                for _, entry in ipairs(State.effects) do
+                    if MatchesFilter(entry) then
+                        if entry.unavailable then
+                            GUI:TextColored(C.muted[1], C.muted[2], C.muted[3], C.muted[4],
+                                string.format("[%d] (资源不可用)", entry.index))
+                        else
+                            local eCol = GetTypeColor(entry.type)
+                            local shortName = string.match(entry.path, "[^/\\]+$") or entry.path
+                            local activeTag = entry.isActive and "" or " [Inactive]"
+                            local label = string.format("[%d] %s  ID:%d  %s%s",
+                                entry.index, GetTypeName(entry.type), entry.id or 0, shortName, activeTag)
+                            GUI:TextColored(eCol[1], eCol[2], eCol[3], eCol[4], label)
+
+                            -- 运行/停止 切换按钮
+                            GUI:SameLine(0, 5)
+                            local runningIdx = nil
+                            for ri, re in ipairs(State.runningEffects) do
+                                if re.index == entry.index then runningIdx = ri break end
+                            end
+
+                            if runningIdx then
+                                T.PushBtn(C.btnStop)
+                                if GUI:Button("x##run" .. entry.index, 22, 18) then
+                                    StopEffect(entry.index)
+                                    table.remove(State.runningEffects, runningIdx)
+                                    d("[MapEffect] 停止: Index=" .. entry.index)
                                 end
+                                T.PopBtn()
+                                if GUI:IsItemHovered() then GUI:SetTooltip("停止此特效") end
+                            else
+                                T.PushBtn(C.btnRun)
+                                if GUI:Button(">##run" .. entry.index, 22, 18) then
+                                    if Argus and Argus.runMapEffect then
+                                        local flag = 0
+                                        if Argus.getEffectResourceScriptFlagForIndex then
+                                            flag = Argus.getEffectResourceScriptFlagForIndex(entry.index) or 0
+                                        end
+                                        Argus.runMapEffect(entry.index, 0, flag)
+                                        d("[MapEffect] 运行: Index=" .. entry.index .. " Flag=" .. flag)
+                                        table.insert(State.runningEffects, { index = entry.index, a2 = 0, flags = flag })
+                                    end
+                                end
+                                T.PopBtn()
+                                if GUI:IsItemHovered() then GUI:SetTooltip("运行此特效") end
+                            end
+
+                            -- 展开按钮
+                            GUI:SameLine(0, 3)
+                            local expandLabel = (State.selectedIndex == entry.index) and "-" or "+"
+                            if GUI:Button(expandLabel .. "##exp" .. entry.index, 22, 18) then
+                                if State.selectedIndex == entry.index then
+                                    State.selectedIndex = -1
+                                else
+                                    State.selectedIndex = entry.index
+                                end
+                            end
+                            if GUI:IsItemHovered() then GUI:SetTooltip("展开/收起详情") end
+
+                            -- 详情面板
+                            if State.selectedIndex == entry.index then
+                                DrawDetailPanel(entry)
                             end
                         end
                     end
-                    d("[MapEffect] 已全部停止 (" .. #State.runningEffects .. " 个)")
-                    State.runningEffects = {}
                 end
-                GUI:PopStyleColor(3)
+
+                GUI:EndChild()
+                GUI:EndTabItem()
+            end
+
+            -- ========================================
+            -- Tab 2: 执行控制
+            -- ========================================
+            if GUI:BeginTabItem("执行控制") then
+
+                -- ---- 正在执行的特效 ----
+                if #State.runningEffects > 0 then
+                    T.SubHeader("正在执行的特效")
+                    T.SuccessText("共 " .. #State.runningEffects .. " 个")
+                    GUI:SameLine(0, 10)
+                    T.PushBtn(C.btnStop)
+                    if GUI:Button("全部停止##stopAll", 80, 22) then
+                        for _, re in ipairs(State.runningEffects) do StopEffect(re.index) end
+                        d("[MapEffect] 已全部停止 (" .. #State.runningEffects .. " 个)")
+                        State.runningEffects = {}
+                    end
+                    T.PopBtn()
+                    GUI:Spacing()
+
+                    local toRemove = {}
+                    for ri, re in ipairs(State.runningEffects) do
+                        T.SuccessText(string.format("[%d] Index:%d  A2:%d  Flags:%d", ri, re.index, re.a2, re.flags))
+                        GUI:SameLine()
+                        T.PushBtn(C.btnStop)
+                        if GUI:Button("停止##r" .. ri) then
+                            StopEffect(re.index)
+                            table.insert(toRemove, ri)
+                        end
+                        T.PopBtn()
+                    end
+                    for i = #toRemove, 1, -1 do table.remove(State.runningEffects, toRemove[i]) end
+
+                    GUI:Separator()
+                    GUI:Spacing()
+                end
+
+                -- ---- 手动执行 runMapEffect ----
+                T.SubHeader("手动执行 runMapEffect")
+                T.HintText("Argus.runMapEffect(index, a2, flags)")
                 GUI:Spacing()
 
-                local toRemove = {}
-                for ri, re in ipairs(State.runningEffects) do
-                    GUI:TextColored(C.success[1], C.success[2], C.success[3], C.success[4],
-                        string.format("[%d] Index:%d  A2:%d  Flags:%d", ri, re.index, re.a2, re.flags))
-                    GUI:SameLine()
-                    if GUI:Button("停止##running" .. ri) then
-                        d("[MapEffect] 尝试停止特效 Index=" .. re.index .. " Flags=" .. re.flags)
-                        local res = Argus.getMapEffectResource(re.index)
+                GUI:PushItemWidth(100)
+                State.runIndex = GUI:InputInt("Index##run", State.runIndex)
+                GUI:SameLine()
+                State.runA2 = GUI:InputInt("A2##run", State.runA2)
+                GUI:SameLine()
+                State.runFlags = GUI:InputInt("Flags##run", State.runFlags)
+                GUI:PopItemWidth()
+                GUI:Spacing()
+
+                if GUI:Button("执行##runME", 70, 24) then
+                    if Argus and Argus.runMapEffect then
+                        Argus.runMapEffect(State.runIndex, State.runA2, State.runFlags)
+                        d("[MapEffect] runMapEffect: " .. State.runIndex .. ", " .. State.runA2 .. ", " .. State.runFlags)
+                        table.insert(State.runningEffects, {
+                            index = State.runIndex, a2 = State.runA2, flags = State.runFlags
+                        })
+                    end
+                end
+                GUI:SameLine(0, 4)
+                if GUI:Button("自动Flag##runME", 80, 24) then
+                    if Argus and Argus.getEffectResourceScriptFlagForIndex then
+                        local flag = Argus.getEffectResourceScriptFlagForIndex(State.runIndex)
+                        if flag then State.runFlags = flag end
+                    end
+                end
+                if GUI:IsItemHovered() then GUI:SetTooltip("根据 Index 自动获取 Flag") end
+                GUI:SameLine(0, 4)
+                if GUI:Button("Flag>Index##runME", 80, 24) then
+                    if Argus and Argus.getEffectResourceScriptIndexForFlag then
+                        local idx = Argus.getEffectResourceScriptIndexForFlag(State.runFlags)
+                        if idx then State.runIndex = idx end
+                    end
+                end
+                if GUI:IsItemHovered() then GUI:SetTooltip("根据 Flag 反向查询 Index") end
+
+                GUI:Spacing()
+                T.PushBtn(C.btnSend)
+                if GUI:Button("发送到生成器##runSend", 120, 24) then
+                    M._mapEffectTransfer = { a1 = State.runIndex, a3 = State.runFlags }
+                    if Argus and Argus.getMapEffectResource then
+                        local res = Argus.getMapEffectResource(State.runIndex)
                         if res then
-                            local _, _, resType, _ = Argus.getEffectResourceInfo(res)
-                            local stopped = false
-
-                            if resType == 6 then
-                                local numScripts = Argus.getNumEffectResourceScripts(res)
-                                -- 策略1: 找 _off 脚本并启动它来关闭特效
-                                for si = 0, numScripts - 1 do
-                                    local sName, _, _, _ = Argus.getEffectResourceScriptInfo(res, si)
-                                    if sName and string.find(sName, "_off") then
-                                        d("[MapEffect] 找到 off 脚本: [" .. si .. "] " .. sName .. "，尝试启动")
-                                        local result = Argus.startEffectResourceScript(res, si, 0)
-                                        d("[MapEffect]   startEffectResourceScript 结果: " .. tostring(result))
-                                        local offFlag = Argus.getEffectResourceScriptFlagForIndex(re.index)
-                                        d("[MapEffect]   off 脚本 index=" .. si)
-                                        stopped = true
-                                    end
-                                end
-
-                                -- 策略2: 如果没找到 _off，尝试停止所有正在运行的脚本
-                                if not stopped then
-                                    for si = 0, numScripts - 1 do
-                                        local sName, _, _, isRunning = Argus.getEffectResourceScriptInfo(res, si)
-                                        d("[MapEffect]   Script[" .. si .. "]: " .. tostring(sName) .. " running=" .. tostring(isRunning))
-                                        Argus.stopEffectResourceScript(res, si)
-                                    end
-                                    d("[MapEffect] 已尝试停止所有脚本")
-                                end
+                            local px, py, pz = Argus.getEffectResourcePosition(res)
+                            if px then
+                                M._mapEffectTransfer.posX = px
+                                M._mapEffectTransfer.posY = py
+                                M._mapEffectTransfer.posZ = pz
                             end
                         end
-                        table.insert(toRemove, ri)
+                    end
+                    if M.ArgusBuilderUI then M.ArgusBuilderUI.open = true end
+                end
+                T.PopBtn()
+                if GUI:IsItemHovered() then GUI:SetTooltip("发送到 Argus 代码生成器") end
+
+                GUI:Spacing()
+                GUI:Separator()
+                GUI:Spacing()
+
+                -- ---- 添加玩家标记 ----
+                T.SubHeader("添加玩家标记")
+                T.HintText("Argus.addPlayerMarker(markerID)")
+                GUI:Spacing()
+                GUI:PushItemWidth(100)
+                State.markerID = GUI:InputInt("MarkerID##marker", State.markerID)
+                GUI:PopItemWidth()
+                GUI:SameLine(0, 6)
+                if GUI:Button("添加##marker", 70, 24) then
+                    if Argus and Argus.addPlayerMarker then
+                        Argus.addPlayerMarker(State.markerID)
+                        d("[MapEffect] addPlayerMarker: " .. tostring(State.markerID))
                     end
                 end
-                -- 从后往前删除，避免索引偏移
-                for i = #toRemove, 1, -1 do
-                    table.remove(State.runningEffects, toRemove[i])
-                end
-                GUI:Unindent(8)
+
+                GUI:EndTabItem()
             end
-            GUI:Spacing()
-        end
 
-        -- =============================================
-        -- 手动执行 runMapEffect
-        -- =============================================
-        if GUI:CollapsingHeader("手动执行 runMapEffect##MERunPanel") then
-            GUI:Indent(8)
-            GUI:TextColored(C.muted[1], C.muted[2], C.muted[3], C.muted[4],
-                "Argus.runMapEffect(index, a2, flags)")
-            GUI:Spacing()
-
-            GUI:PushItemWidth(100)
-            State.runIndex = GUI:InputInt("Index##run", State.runIndex)
-            GUI:SameLine()
-            State.runA2 = GUI:InputInt("A2##run", State.runA2)
-            GUI:SameLine()
-            State.runFlags = GUI:InputInt("Flags##run", State.runFlags)
-            GUI:PopItemWidth()
-            GUI:Spacing()
-
-            if GUI:Button("执行##runME", 80, 25) then
-                if Argus and Argus.runMapEffect then
-                    Argus.runMapEffect(State.runIndex, State.runA2, State.runFlags)
-                    d("[MapEffect] runMapEffect: " .. State.runIndex .. ", " .. State.runA2 .. ", " .. State.runFlags)
-                    -- 记录到正在执行列表
-                    table.insert(State.runningEffects, {
-                        index = State.runIndex, a2 = State.runA2, flags = State.runFlags
-                    })
-                end
-            end
-            GUI:SameLine()
-            if GUI:Button("自动Flag##runME", 90, 25) then
-                if Argus and Argus.getEffectResourceScriptFlagForIndex then
-                    local flag = Argus.getEffectResourceScriptFlagForIndex(State.runIndex)
-                    if flag then
-                        State.runFlags = flag
-                        d("[MapEffect] 自动获取 Flag: " .. tostring(flag))
-                    end
-                end
-            end
-            if GUI:IsItemHovered() then
-                GUI:SetTooltip("根据 Index 自动获取 Script Flag")
-            end
-            GUI:SameLine()
-            if GUI:Button("Flag→Index##runME", 90, 25) then
-                if Argus and Argus.getEffectResourceScriptIndexForFlag then
-                    local idx = Argus.getEffectResourceScriptIndexForFlag(State.runFlags)
-                    if idx then
-                        State.runIndex = idx
-                        d("[MapEffect] Flag→Index: " .. tostring(idx))
-                    end
-                end
-            end
-            if GUI:IsItemHovered() then
-                GUI:SetTooltip("根据 Flag 反向查询 Index")
-            end
-            GUI:Spacing()
-            GUI:PushStyleColor(GUI.Col_Button, 0.3, 0.5, 0.8, 0.9)
-            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.4, 0.6, 0.9, 1.0)
-            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.2, 0.4, 0.7, 1.0)
-            if GUI:Button("发送到生成器##runMESend", 130, 25) then
-                M._mapEffectTransfer = {
-                    a1 = State.runIndex,
-                    a3 = State.runFlags,
-                }
-                -- 尝试获取位置
-                if Argus and Argus.getMapEffectResource then
-                    local res = Argus.getMapEffectResource(State.runIndex)
-                    if res then
-                        local px, py, pz = Argus.getEffectResourcePosition(res)
-                        if px then
-                            M._mapEffectTransfer.posX = px
-                            M._mapEffectTransfer.posY = py
-                            M._mapEffectTransfer.posZ = pz
-                        end
-                    end
-                end
-                if M.ArgusBuilderUI then
-                    M.ArgusBuilderUI.open = true
-                end
-                d("[MapEffect] 已发送到生成器: Index=" .. State.runIndex .. " Flags=" .. State.runFlags)
-            end
-            GUI:PopStyleColor(3)
-            if GUI:IsItemHovered() then
-                GUI:SetTooltip("将当前 Index 和 Flags 发送到 Argus 代码生成器")
-            end
-            GUI:Unindent(8)
-        end
-
-        GUI:Spacing()
-
-        -- =============================================
-        -- addPlayerMarker
-        -- =============================================
-        if GUI:CollapsingHeader("添加玩家标记 addPlayerMarker##MEMarker") then
-            GUI:Indent(8)
-            GUI:TextColored(C.muted[1], C.muted[2], C.muted[3], C.muted[4],
-                "Argus.addPlayerMarker(markerID)")
-            GUI:Spacing()
-            GUI:PushItemWidth(100)
-            State.markerID = GUI:InputInt("MarkerID##marker", State.markerID)
-            GUI:PopItemWidth()
-            GUI:SameLine()
-            if GUI:Button("添加标记##marker", 90, 25) then
-                if Argus and Argus.addPlayerMarker then
-                    Argus.addPlayerMarker(State.markerID)
-                    d("[MapEffect] addPlayerMarker: " .. tostring(State.markerID))
-                end
-            end
-            GUI:Unindent(8)
-        end
-
-        GUI:Spacing()
-        GUI:Separator()
-        GUI:Spacing()
-
-        -- =============================================
-        -- 特效列表
-        -- =============================================
-        local numTotal = Argus and Argus.getNumCurrentMapEffects and Argus.getNumCurrentMapEffects() or 0
-        local filteredCount = 0
-        for _, e in ipairs(State.effects) do
-            if MatchesFilter(e) then filteredCount = filteredCount + 1 end
-        end
-
-        GUI:TextColored(C.title[1], C.title[2], C.title[3], C.title[4],
-            "当前地图特效数量: " .. filteredCount .. " / " .. numTotal)
-        GUI:Spacing()
-
-        for _, entry in ipairs(State.effects) do
-            if MatchesFilter(entry) then
-                if entry.unavailable then
-                    -- 不可用条目：灰色显示
-                    GUI:TextColored(C.muted[1], C.muted[2], C.muted[3], C.muted[4],
-                        string.format("[%d] (资源不可用 - getMapEffectResource 返回 nil)", entry.index))
-                    if GUI:IsItemHovered() then
-                        GUI:SetTooltip("该索引的资源已卸载或不可访问")
-                    end
-                else
-                    local col = GetTypeColor(entry.type)
-                    local shortName = string.match(entry.path, "[^/\\]+$") or entry.path
-                    local activeTag = entry.isActive and "" or " [Inactive]"
-                    local label = string.format("[%d] %s  ID:%d  %s%s",
-                        entry.index, GetTypeName(entry.type), entry.id or 0, shortName, activeTag)
-
-                    GUI:TextColored(col[1], col[2], col[3], col[4], label)
-
-                    -- 同行添加 运行/停止 切换按钮
-                    GUI:SameLine(0, 5)
-                    -- 查找是否正在运行
-                    local runningIdx = nil
-                    for ri, re in ipairs(State.runningEffects) do
-                        if re.index == entry.index then runningIdx = ri break end
-                    end
-
-                    if runningIdx then
-                        -- 正在运行 → 红色停止按钮
-                        GUI:PushStyleColor(GUI.Col_Button, 0.75, 0.20, 0.20, 0.9)
-                        GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.85, 0.30, 0.30, 1.0)
-                        GUI:PushStyleColor(GUI.Col_ButtonActive, 0.60, 0.15, 0.15, 1.0)
-                        if GUI:Button("x##run" .. entry.index, 22, 18) then
-                            local res = Argus.getMapEffectResource(entry.index)
-                            if res then
-                                local _, _, resType, _ = Argus.getEffectResourceInfo(res)
-                                if resType == 6 then
-                                    local numScripts = Argus.getNumEffectResourceScripts(res)
-                                    for si = 0, numScripts - 1 do
-                                        Argus.stopEffectResourceScript(res, si)
-                                    end
-                                end
-                            end
-                            table.remove(State.runningEffects, runningIdx)
-                            d("[MapEffect] 停止: Index=" .. entry.index)
-                        end
-                        GUI:PopStyleColor(3)
-                        if GUI:IsItemHovered() then
-                            GUI:SetTooltip("停止此特效")
-                        end
-                    else
-                        -- 未运行 → 绿色启动按钮
-                        GUI:PushStyleColor(GUI.Col_Button, 0.20, 0.65, 0.35, 0.85)
-                        GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.30, 0.80, 0.45, 0.95)
-                        GUI:PushStyleColor(GUI.Col_ButtonActive, 0.15, 0.55, 0.25, 1.0)
-                        if GUI:Button(">##run" .. entry.index, 22, 18) then
-                            if Argus and Argus.runMapEffect then
-                                local flag = 0
-                                if Argus.getEffectResourceScriptFlagForIndex then
-                                    flag = Argus.getEffectResourceScriptFlagForIndex(entry.index) or 0
-                                end
-                                Argus.runMapEffect(entry.index, 0, flag)
-                                d("[MapEffect] 运行: Index=" .. entry.index .. " Flag=" .. flag)
-                                table.insert(State.runningEffects, {
-                                    index = entry.index, a2 = 0, flags = flag
-                                })
-                            end
-                        end
-                        GUI:PopStyleColor(3)
-                        if GUI:IsItemHovered() then
-                            GUI:SetTooltip("运行此特效 (runMapEffect)")
-                        end
-                    end
-
-                    -- 同行添加展开按钮
-                    GUI:SameLine(0, 3)
-                    local expandLabel = (State.selectedIndex == entry.index) and "-" or "+"
-                    GUI:PushStyleColor(GUI.Col_Button, 0.30, 0.30, 0.35, 0.7)
-                    GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.40, 0.40, 0.50, 0.85)
-                    GUI:PushStyleColor(GUI.Col_ButtonActive, 0.25, 0.25, 0.30, 1.0)
-                    if GUI:Button(expandLabel .. "##expand" .. entry.index, 22, 18) then
-                        if State.selectedIndex == entry.index then
-                            State.selectedIndex = -1
-                        else
-                            State.selectedIndex = entry.index
-                        end
-                    end
-                    GUI:PopStyleColor(3)
-                    if GUI:IsItemHovered() then
-                        GUI:SetTooltip("展开/收起详情")
-                    end
-
-                    -- 右键复制完整信息（在标签文字上）
-                    -- 注意：此处检查的是最后一个控件（展开按钮），标签文字的右键已被按钮阻断
-                    -- 所以我们不再用 IsItemClicked(1)
-
-                    -- 悬停提示（标签文字）—— 由于按钮在同行，标签文字的 hover 不再独立可靠
-                    -- tooltip 已集成到各按钮中
-
-                    -- 展开详情
-                    if State.selectedIndex == entry.index then
-                        GUI:Indent(16)
-                        DrawDetailPanel(entry)
-                        GUI:Unindent(16)
-                    end
-                end
-            end
+            GUI:EndTabBar()
         end
 
     end
 
     GUI:End()
+    T.PopTheme()
 end
 
 d("[StringCore] MapEffectUI.lua 加载完成")

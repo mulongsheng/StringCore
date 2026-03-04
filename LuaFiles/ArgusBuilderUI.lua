@@ -6,19 +6,8 @@
 local M = StringGuide
 if not M then return end
 
--- =============================================
--- 主题色
--- =============================================
-local C = {
-    title    = { 0.95, 0.75, 0.20, 1.0 },
-    accent   = { 0.40, 0.75, 1.00, 1.0 },
-    success  = { 0.30, 0.90, 0.40, 1.0 },
-    danger   = { 1.00, 0.40, 0.40, 1.0 },
-    muted    = { 0.55, 0.55, 0.55, 1.0 },
-    white    = { 0.90, 0.90, 0.90, 1.0 },
-    hint     = { 0.70, 0.70, 0.70, 1.0 },
-    section  = { 0.65, 0.85, 1.00, 1.0 },
-}
+local T = M.UITheme
+local C = T.C
 
 -- =============================================
 -- 形状定义
@@ -1068,9 +1057,9 @@ end
 -- 主绘制函数
 -- =============================================
 M.DrawArgusBuilderUI = function()
-
+    T.PushTheme()
     GUI:SetNextWindowSize(520, 700, GUI.SetCond_Appearing)
-    M.ArgusBuilderUI.visible, M.ArgusBuilderUI.open = GUI:Begin("Argus 绘图代码生成器###ArgusBuilderWindow", M.ArgusBuilderUI.open)
+    M.ArgusBuilderUI.visible, M.ArgusBuilderUI.open = GUI:Begin("Argus 代码生成器###ArgusBuilderWindow", M.ArgusBuilderUI.open)
 
     if M.ArgusBuilderUI.visible then
 
@@ -1091,12 +1080,15 @@ M.DrawArgusBuilderUI = function()
             M._mapEffectTransfer = nil
         end
 
-        -- =============================================
-        -- 1. 形状选择
-        -- =============================================
-        GUI:TextColored(C.title[1], C.title[2], C.title[3], C.title[4], "形状选择")
-        GUI:Spacing()
+        -- ===== TabBar =====
+        if GUI:BeginTabBar("ABTabBar") then
 
+        -- ========================================
+        -- Tab 1: 形状参数
+        -- ========================================
+        if GUI:BeginTabItem("形状参数") then
+
+        T.SubHeader("形状选择")
         GUI:PushItemWidth(250)
         local newShapeIdx = GUI:Combo("形状##ArgusShape", State.shapeIndex, ShapeDisplayNames)
         GUI:PopItemWidth()
@@ -1345,15 +1337,13 @@ M.DrawArgusBuilderUI = function()
 
         GUI:PopItemWidth()
 
-        GUI:Spacing()
-        GUI:Separator()
-        GUI:Spacing()
+        GUI:EndTabItem()
+        end -- Tab1
 
-        -- =============================================
-        -- 5. 颜色设置
-        -- =============================================
-        if GUI:CollapsingHeader("颜色设置##ArgusColors") then
-            GUI:Indent(5)
+        -- ========================================
+        -- Tab 2: 颜色设置
+        -- ========================================
+        if GUI:BeginTabItem("颜色") then
 
             State.useMoogleDrawer = GUI:Checkbox("使用默认配色 (MoogleDrawer)##ArgusMoogle", State.useMoogleDrawer)
             if GUI:IsItemHovered() then
@@ -1402,17 +1392,13 @@ M.DrawArgusBuilderUI = function()
                 State.outlineThickness = GUI:SliderFloat("描边粗细##ArgusOT", State.outlineThickness, 0.5, 5)
                 GUI:PopItemWidth()
             else
-                GUI:TextColored(C.hint[1], C.hint[2], C.hint[3], C.hint[4], "  当前使用 TensorCore 预设蓝紫渐变配色")
+                T.HintText("当前使用 TensorCore 预设蓝紫渐变配色")
             end
 
-            GUI:Unindent(5)
-        end
-
         GUI:Spacing()
+        GUI:Separator()
 
-        -- =============================================
-        -- 6. 高级参数（折叠）
-        -- =============================================
+        -- 高级参数
         if GUI:CollapsingHeader("高级参数##ArgusAdvanced") then
             GUI:Indent(5)
 
@@ -1450,13 +1436,73 @@ M.DrawArgusBuilderUI = function()
             GUI:Unindent(5)
         end
 
+        GUI:EndTabItem()
+        end -- Tab2
+
+        -- ========================================
+        -- Tab 3: 代码 / 组合
+        -- ========================================
+        if GUI:BeginTabItem("代码") then
+
+        -- 操作按钮 (单体生成)
+        T.SubHeader("单体绘图")
+        T.PushBtn(C.btnPrimary)
+        if GUI:Button("生成代码##ArgusGen", 90, 26) then
+            SyncPlayerPos()
+            GenerateCode()
+            State.lastLog = "代码已生成"
+        end
+        T.PopBtn()
+        GUI:SameLine(0, 6)
+        T.PushBtn(C.btnRun)
+        if GUI:Button("复制##ArgusCopy", 70, 26) then
+            if State.generatedCode == "" then SyncPlayerPos(); GenerateCode() end
+            CopyToClipboard(State.generatedCode)
+        end
+        T.PopBtn()
+        GUI:SameLine(0, 6)
+        T.PushBtn(C.btnSend)
+        if GUI:Button("预览##ArgusPreview", 70, 26) then
+            SyncPlayerPos()
+            ExecutePreview()
+        end
+        T.PopBtn()
+        GUI:SameLine(0, 6)
+        T.PushBtn(C.btnStop)
+        if GUI:Button("清除##ArgusClear", 60, 26) then
+            for _, uuid in ipairs(State.previewUUIDs) do
+                if Argus and Argus.deleteTimedShape then Argus.deleteTimedShape(uuid) end
+            end
+            State.previewUUIDs = {}
+            State.lastLog = "已清除所有预览"
+        end
+        T.PopBtn()
+
+        if State.lastLog ~= "" then
+            GUI:SameLine(0, 10)
+            T.SuccessText(State.lastLog)
+        end
+
+        -- 代码展示
+        if State.generatedCode ~= "" then
+            GUI:Spacing()
+            GUI:PushStyleColor(GUI.Col_FrameBg, 0.10, 0.08, 0.10, 0.95)
+            GUI:PushItemWidth(-1)
+            local lc = 1
+            for _ in string.gmatch(State.generatedCode, "\n") do lc = lc + 1 end
+            local th = math.min(math.max(lc * 16 + 10, 80), 250)
+            GUI:InputTextMultiline("##ABCodeOut", State.generatedCode, -1, th, GUI.InputTextFlags_ReadOnly)
+            GUI:PopItemWidth()
+            GUI:PopStyleColor(1)
+        else
+            T.HintText("点击「生成代码」按钮生成 Lua 代码")
+        end
+
         GUI:Spacing()
         GUI:Separator()
         GUI:Spacing()
 
-        -- =============================================
-        -- 7. 组合机制（折叠）
-        -- =============================================
+        -- 组合机制
         if GUI:CollapsingHeader("组合机制##ArgusCombo") then
             GUI:Indent(5)
 
@@ -1496,29 +1542,22 @@ M.DrawArgusBuilderUI = function()
                 GUI:Spacing()
 
                 -- 添加步骤按钮
-                GUI:PushStyleColor(GUI.Col_Button, 0.2, 0.6, 0.4, 0.9)
-                GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.3, 0.7, 0.5, 1.0)
-                GUI:PushStyleColor(GUI.Col_ButtonActive, 0.15, 0.5, 0.35, 1.0)
-                if GUI:Button("添加当前形状为步骤##ArgusComboAdd", 180, 24) then
+                T.PushBtn(C.btnRun)
+                if GUI:Button("添加当前形状##ArgusComboAdd", 130, 22) then
                     local step = SnapshotCurrentStep(0)
                     if step then
                         table.insert(State.comboSteps, step)
                         State.lastLog = "已添加步骤: " .. step.shapeName
                     end
                 end
-                GUI:PopStyleColor(3)
-
-                GUI:SameLine(0, 8)
-
-                -- 清空步骤按钮
-                GUI:PushStyleColor(GUI.Col_Button, 0.7, 0.2, 0.2, 0.9)
-                GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.8, 0.3, 0.3, 1.0)
-                GUI:PushStyleColor(GUI.Col_ButtonActive, 0.6, 0.15, 0.15, 1.0)
-                if GUI:Button("清空步骤##ArgusComboClear", 80, 24) then
+                T.PopBtn()
+                GUI:SameLine(0, 6)
+                T.PushBtn(C.btnStop)
+                if GUI:Button("清空##ArgusComboClear", 55, 22) then
                     State.comboSteps = {}
                     State.lastLog = "已清空所有步骤"
                 end
-                GUI:PopStyleColor(3)
+                T.PopBtn()
 
                 GUI:Spacing()
 
@@ -1567,15 +1606,12 @@ M.DrawArgusBuilderUI = function()
                             GUI:PopItemWidth()
                         end
 
-                        -- 删除按钮
                         GUI:SameLine(0, 5)
-                        GUI:PushStyleColor(GUI.Col_Button, 0.6, 0.15, 0.15, 0.8)
-                        GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.8, 0.2, 0.2, 0.9)
-                        GUI:PushStyleColor(GUI.Col_ButtonActive, 0.5, 0.1, 0.1, 1.0)
-                        if GUI:Button("删除##ComboRemove" .. i, 40, 18) then
+                        T.PushBtn(C.btnStop)
+                        if GUI:Button("x##ComboRm" .. i, 22, 18) then
                             removeIdx = i
                         end
-                        GUI:PopStyleColor(3)
+                        T.PopBtn()
                     end
 
                     if removeIdx then
@@ -1590,75 +1626,45 @@ M.DrawArgusBuilderUI = function()
             GUI:Spacing()
 
             -- 组合操作按钮
-            GUI:PushStyleColor(GUI.Col_Button, 0.2, 0.5, 0.8, 0.9)
-            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.3, 0.6, 0.9, 1.0)
-            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.15, 0.4, 0.7, 1.0)
-            if GUI:Button("生成组合代码##ArgusComboGen", 120, 28) then
+            T.PushBtn(C.btnPrimary)
+            if GUI:Button("生成##ComboGen", 65, 24) then
                 SyncPlayerPos()
                 GenerateComboCode()
-                State.lastLog = "组合代码已生成"
             end
-            GUI:PopStyleColor(3)
-
-            GUI:SameLine(0, 8)
-
-            GUI:PushStyleColor(GUI.Col_Button, 0.2, 0.7, 0.3, 0.9)
-            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.3, 0.8, 0.4, 1.0)
-            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.15, 0.6, 0.25, 1.0)
-            if GUI:Button("复制组合代码##ArgusComboCopy", 120, 28) then
-                if State.comboGeneratedCode == "" then
-                    SyncPlayerPos()
-                    GenerateComboCode()
-                end
+            T.PopBtn()
+            GUI:SameLine(0, 4)
+            T.PushBtn(C.btnRun)
+            if GUI:Button("复制##ComboCopy", 55, 24) then
+                if State.comboGeneratedCode == "" then SyncPlayerPos(); GenerateComboCode() end
                 CopyToClipboard(State.comboGeneratedCode)
             end
-            GUI:PopStyleColor(3)
-
-            GUI:SameLine(0, 8)
-
-            GUI:PushStyleColor(GUI.Col_Button, 0.7, 0.5, 0.1, 0.9)
-            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.8, 0.6, 0.2, 1.0)
-            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.6, 0.4, 0.05, 1.0)
-            if GUI:Button("预览组合##ArgusComboPreview", 100, 28) then
+            T.PopBtn()
+            GUI:SameLine(0, 4)
+            T.PushBtn(C.btnSend)
+            if GUI:Button("预览##ComboPreview", 55, 24) then
                 SyncPlayerPos()
                 ExecuteComboPreview()
             end
-            GUI:PopStyleColor(3)
-
-            GUI:SameLine(0, 8)
-
-            GUI:PushStyleColor(GUI.Col_Button, 0.7, 0.2, 0.2, 0.9)
-            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.8, 0.3, 0.3, 1.0)
-            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.6, 0.15, 0.15, 1.0)
-            if GUI:Button("清除预览##ArgusComboClearPrev", 90, 28) then
+            T.PopBtn()
+            GUI:SameLine(0, 4)
+            T.PushBtn(C.btnStop)
+            if GUI:Button("清除##ComboClearPrev", 55, 24) then
                 for _, uuid in ipairs(State.previewUUIDs) do
-                    if Argus and Argus.deleteTimedShape then
-                        Argus.deleteTimedShape(uuid)
-                    end
+                    if Argus and Argus.deleteTimedShape then Argus.deleteTimedShape(uuid) end
                 end
                 State.previewUUIDs = {}
-                State.lastLog = "已清除所有预览"
             end
-            GUI:PopStyleColor(3)
+            T.PopBtn()
 
             -- 组合代码展示
             if State.comboGeneratedCode ~= "" then
                 GUI:Spacing()
-                GUI:TextColored(C.title[1], C.title[2], C.title[3], C.title[4], "组合代码")
-                GUI:Spacing()
-
-                GUI:PushStyleColor(GUI.Col_FrameBg, 0.1, 0.1, 0.15, 0.95)
+                GUI:PushStyleColor(GUI.Col_FrameBg, 0.10, 0.08, 0.10, 0.95)
                 GUI:PushItemWidth(-1)
-
-                local lineCount = 1
-                for _ in string.gmatch(State.comboGeneratedCode, "\n") do
-                    lineCount = lineCount + 1
-                end
-                local textHeight = math.max(lineCount * 16 + 10, 100)
-                if textHeight > 300 then textHeight = 300 end
-
-                GUI:InputTextMultiline("##ArgusComboCodeOutput", State.comboGeneratedCode, -1, textHeight, GUI.InputTextFlags_ReadOnly)
-
+                local lc = 1
+                for _ in string.gmatch(State.comboGeneratedCode, "\n") do lc = lc + 1 end
+                local th = math.min(math.max(lc * 16 + 10, 80), 250)
+                GUI:InputTextMultiline("##ComboCodeOut", State.comboGeneratedCode, -1, th, GUI.InputTextFlags_ReadOnly)
                 GUI:PopItemWidth()
                 GUI:PopStyleColor(1)
             end
@@ -1666,13 +1672,13 @@ M.DrawArgusBuilderUI = function()
             GUI:Unindent(5)
         end
 
-        GUI:Spacing()
+        GUI:EndTabItem()
+        end -- Tab3
 
-        -- =============================================
-        -- 7.5 MapEffect 触发器
-        -- =============================================
-        if GUI:CollapsingHeader("MapEffect 触发器##ArgusME") then
-            GUI:Indent(5)
+        -- ========================================
+        -- Tab 4: ME 触发器
+        -- ========================================
+        if GUI:BeginTabItem("ME触发器") then
 
             -- 代码模式
             local meModeNames = { "TensorReactions OnMapEffect", "Argus.registerOnMapEffect" }
@@ -1680,11 +1686,9 @@ M.DrawArgusBuilderUI = function()
             State.meCodeMode = GUI:Combo("代码模式##MECodeMode", State.meCodeMode, meModeNames)
             GUI:PopItemWidth()
             if State.meCodeMode == 1 then
-                GUI:TextColored(C.hint[1], C.hint[2], C.hint[3], C.hint[4],
-                    "  在 TensorReactions 中新建触发器，事件类型选 OnMapEffect")
+                T.HintText("在 TensorReactions 中新建触发器，事件类型选 OnMapEffect")
             else
-                GUI:TextColored(C.hint[1], C.hint[2], C.hint[3], C.hint[4],
-                    "  生成独立的 Argus.registerOnMapEffect() 注册代码")
+                T.HintText("生成独立的 Argus.registerOnMapEffect() 注册代码")
             end
 
             GUI:Spacing()
@@ -1692,9 +1696,7 @@ M.DrawArgusBuilderUI = function()
             GUI:Spacing()
 
             -- 触发条件输入
-            GUI:TextColored(C.section[1], C.section[2], C.section[3], C.section[4], "触发条件:")
-            GUI:Spacing()
-
+            T.SubHeader("触发条件")
             GUI:PushItemWidth(100)
             State.meA1 = GUI:InputInt("Index (a1)##MEA1", State.meA1)
             GUI:SameLine(0, 10)
@@ -1706,290 +1708,99 @@ M.DrawArgusBuilderUI = function()
                 GUI:SetTooltip("不勾选则只判断 Index(a1)，忽略 Flags(a3)")
             end
 
-            -- 位置来源
-            local posModeNames = { "固定坐标 (当前设置)", "特效资源位置 (自动获取)", "玩家实时位置" }
-            GUI:PushItemWidth(250)
+            local posModeNames = { "固定坐标", "特效资源位置", "玩家实时位置" }
+            GUI:PushItemWidth(200)
             State.mePosMode = GUI:Combo("位置来源##MEPosMode", State.mePosMode, posModeNames)
             GUI:PopItemWidth()
-            if State.mePosMode == 2 then
-                GUI:TextColored(C.hint[1], C.hint[2], C.hint[3], C.hint[4],
-                    "  自动调用 Argus.getEffectResourcePosition 获取特效位置")
-            end
 
-            -- 备注
             GUI:PushItemWidth(200)
             State.meLabel = GUI:InputText("备注##MELabel", State.meLabel)
             GUI:PopItemWidth()
-
             GUI:Spacing()
 
             -- 添加/清空按钮
-            GUI:PushStyleColor(GUI.Col_Button, 0.2, 0.6, 0.4, 0.9)
-            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.3, 0.7, 0.5, 1.0)
-            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.15, 0.5, 0.35, 1.0)
-            if GUI:Button("添加当前形状为触发条件##MEAdd", 220, 24) then
+            T.PushBtn(C.btnRun)
+            if GUI:Button("添加当前形状##MEAdd", 130, 22) then
                 local entry = SnapshotMEStep()
                 if entry then
                     table.insert(State.meEntries, entry)
-                    State.lastLog = "已添加 MapEffect 触发: a1=" .. entry.a1
+                    State.lastLog = "已添加: a1=" .. entry.a1
                 end
             end
-            GUI:PopStyleColor(3)
-
-            GUI:SameLine(0, 8)
-
-            GUI:PushStyleColor(GUI.Col_Button, 0.7, 0.2, 0.2, 0.9)
-            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.8, 0.3, 0.3, 1.0)
-            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.6, 0.15, 0.15, 1.0)
-            if GUI:Button("清空##MEClear", 60, 24) then
+            T.PopBtn()
+            GUI:SameLine(0, 6)
+            T.PushBtn(C.btnStop)
+            if GUI:Button("清空##MEClear", 55, 22) then
                 State.meEntries = {}
                 State.meGeneratedCode = ""
-                State.lastLog = "已清空所有 MapEffect 触发条件"
             end
-            GUI:PopStyleColor(3)
-
+            T.PopBtn()
             GUI:Spacing()
 
             -- 条件列表
             if #State.meEntries == 0 then
-                GUI:TextColored(C.muted[1], C.muted[2], C.muted[3], C.muted[4],
-                    "  还没有触发条件。设置好参数后点「添加当前形状为触发条件」")
-                GUI:TextColored(C.muted[1], C.muted[2], C.muted[3], C.muted[4],
-                    "  也可在 MapEffect 查看器中点「发送到生成器」")
+                T.HintText("还没有触发条件")
+                T.HintText("可在 MapEffect 查看器中点「发送到生成器」")
             else
                 local removeIdx = nil
                 for i, entry in ipairs(State.meEntries) do
-                    local posDesc = ({"固定坐标", "特效位置", "玩家位置"})[entry.posMode] or "未知"
+                    local posDesc = ({"固定", "特效", "玩家"})[entry.posMode] or "?"
                     local summary = string.format("%d. [a1=%d", i, entry.a1)
-                    if entry.checkA3 then
-                        summary = summary .. string.format(" a3=%d", entry.a3)
-                    end
+                    if entry.checkA3 then summary = summary .. " a3=" .. entry.a3 end
                     summary = summary .. "] " .. entry.shapeName .. " (" .. posDesc .. ")"
                     if entry.label and entry.label ~= "" then
                         summary = summary .. " - " .. entry.label
                     end
-
-                    GUI:TextColored(C.white[1], C.white[2], C.white[3], C.white[4], "  " .. summary)
-
+                    GUI:TextColored(C.white[1], C.white[2], C.white[3], C.white[4], summary)
                     GUI:SameLine(0, 5)
-                    GUI:PushStyleColor(GUI.Col_Button, 0.6, 0.15, 0.15, 0.8)
-                    GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.8, 0.2, 0.2, 0.9)
-                    GUI:PushStyleColor(GUI.Col_ButtonActive, 0.5, 0.1, 0.1, 1.0)
-                    if GUI:Button("删除##MERemove" .. i, 40, 18) then
-                        removeIdx = i
-                    end
-                    GUI:PopStyleColor(3)
+                    T.PushBtn(C.btnStop)
+                    if GUI:Button("x##MEDel" .. i, 22, 18) then removeIdx = i end
+                    T.PopBtn()
                 end
-                if removeIdx then
-                    table.remove(State.meEntries, removeIdx)
-                    State.lastLog = "已删除 MapEffect 触发条件 " .. removeIdx
-                end
+                if removeIdx then table.remove(State.meEntries, removeIdx) end
             end
 
             GUI:Spacing()
             GUI:Separator()
             GUI:Spacing()
 
-            -- 生成/复制按钮
-            GUI:PushStyleColor(GUI.Col_Button, 0.2, 0.5, 0.8, 0.9)
-            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.3, 0.6, 0.9, 1.0)
-            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.15, 0.4, 0.7, 1.0)
-            if GUI:Button("生成 MapEffect 代码##MEGen", 170, 28) then
+            -- 生成/复制
+            T.PushBtn(C.btnPrimary)
+            if GUI:Button("生成代码##MEGen", 90, 24) then
                 SyncPlayerPos()
                 GenerateMapEffectCode()
-                State.lastLog = "MapEffect 代码已生成"
             end
-            GUI:PopStyleColor(3)
-
-            GUI:SameLine(0, 8)
-
-            GUI:PushStyleColor(GUI.Col_Button, 0.2, 0.7, 0.3, 0.9)
-            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.3, 0.8, 0.4, 1.0)
-            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.15, 0.6, 0.25, 1.0)
-            if GUI:Button("复制 MapEffect 代码##MECopy", 170, 28) then
-                if State.meGeneratedCode == "" then
-                    SyncPlayerPos()
-                    GenerateMapEffectCode()
-                end
+            T.PopBtn()
+            GUI:SameLine(0, 6)
+            T.PushBtn(C.btnRun)
+            if GUI:Button("复制##MECopy", 65, 24) then
+                if State.meGeneratedCode == "" then SyncPlayerPos(); GenerateMapEffectCode() end
                 CopyToClipboard(State.meGeneratedCode)
             end
-            GUI:PopStyleColor(3)
+            T.PopBtn()
 
-            -- 代码展示
             if State.meGeneratedCode ~= "" then
                 GUI:Spacing()
-                GUI:TextColored(C.title[1], C.title[2], C.title[3], C.title[4], "MapEffect 触发代码")
-                GUI:Spacing()
-
-                GUI:PushStyleColor(GUI.Col_FrameBg, 0.1, 0.1, 0.15, 0.95)
+                GUI:PushStyleColor(GUI.Col_FrameBg, 0.10, 0.08, 0.10, 0.95)
                 GUI:PushItemWidth(-1)
-                local lineCount = 1
-                for _ in string.gmatch(State.meGeneratedCode, "\n") do
-                    lineCount = lineCount + 1
-                end
-                local textHeight = math.max(lineCount * 16 + 10, 100)
-                if textHeight > 300 then textHeight = 300 end
-                GUI:InputTextMultiline("##MECodeOutput", State.meGeneratedCode, -1, textHeight, GUI.InputTextFlags_ReadOnly)
+                local lc = 1
+                for _ in string.gmatch(State.meGeneratedCode, "\n") do lc = lc + 1 end
+                local th = math.min(math.max(lc * 16 + 10, 80), 250)
+                GUI:InputTextMultiline("##MECodeOut", State.meGeneratedCode, -1, th, GUI.InputTextFlags_ReadOnly)
                 GUI:PopItemWidth()
                 GUI:PopStyleColor(1)
             end
 
-            GUI:Unindent(5)
-        end
+        GUI:EndTabItem()
+        end -- Tab4
 
-        GUI:Spacing()
-        GUI:Separator()
-        GUI:Spacing()
-
-        -- =============================================
-        -- 8. 操作按钮
-        -- =============================================
-        GUI:TextColored(C.title[1], C.title[2], C.title[3], C.title[4], "操作")
-        GUI:Spacing()
-
-        -- 生成代码按钮
-        GUI:PushStyleColor(GUI.Col_Button, 0.2, 0.5, 0.8, 0.9)
-        GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.3, 0.6, 0.9, 1.0)
-        GUI:PushStyleColor(GUI.Col_ButtonActive, 0.15, 0.4, 0.7, 1.0)
-        if GUI:Button("生成代码##ArgusGen", 100, 30) then
-            SyncPlayerPos()
-            GenerateCode()
-            State.lastLog = "代码已生成"
-        end
-        GUI:PopStyleColor(3)
-
-        GUI:SameLine(0, 8)
-
-        -- 复制代码按钮
-        GUI:PushStyleColor(GUI.Col_Button, 0.2, 0.7, 0.3, 0.9)
-        GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.3, 0.8, 0.4, 1.0)
-        GUI:PushStyleColor(GUI.Col_ButtonActive, 0.15, 0.6, 0.25, 1.0)
-        if GUI:Button("复制代码##ArgusCopy", 100, 30) then
-            if State.generatedCode == "" then
-                SyncPlayerPos()
-                GenerateCode()
-            end
-            CopyToClipboard(State.generatedCode)
-        end
-        GUI:PopStyleColor(3)
-
-        GUI:SameLine(0, 8)
-
-        -- 预览按钮
-        GUI:PushStyleColor(GUI.Col_Button, 0.7, 0.5, 0.1, 0.9)
-        GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.8, 0.6, 0.2, 1.0)
-        GUI:PushStyleColor(GUI.Col_ButtonActive, 0.6, 0.4, 0.05, 1.0)
-        if GUI:Button("预览绘图##ArgusPreview", 100, 30) then
-            SyncPlayerPos()
-            ExecutePreview()
-        end
-        GUI:PopStyleColor(3)
-
-        GUI:SameLine(0, 8)
-
-        -- 清除预览按钮
-        GUI:PushStyleColor(GUI.Col_Button, 0.7, 0.2, 0.2, 0.9)
-        GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.8, 0.3, 0.3, 1.0)
-        GUI:PushStyleColor(GUI.Col_ButtonActive, 0.6, 0.15, 0.15, 1.0)
-        if GUI:Button("清除##ArgusClear", 70, 30) then
-            for _, uuid in ipairs(State.previewUUIDs) do
-                if Argus and Argus.deleteTimedShape then
-                    Argus.deleteTimedShape(uuid)
-                end
-            end
-            State.previewUUIDs = {}
-            State.lastLog = "已清除所有预览"
-        end
-        GUI:PopStyleColor(3)
-
-        -- 日志
-        if State.lastLog ~= "" then
-            GUI:Spacing()
-            GUI:TextColored(C.success[1], C.success[2], C.success[3], C.success[4], State.lastLog)
-        end
-
-        GUI:Spacing()
-        GUI:Separator()
-        GUI:Spacing()
-
-        -- =============================================
-        -- 8. 生成的代码展示
-        -- =============================================
-        GUI:TextColored(C.title[1], C.title[2], C.title[3], C.title[4], "生成的代码")
-        GUI:Spacing()
-
-        if State.generatedCode ~= "" then
-            -- 代码展示区
-            GUI:PushStyleColor(GUI.Col_FrameBg, 0.1, 0.1, 0.15, 0.95)
-            GUI:PushItemWidth(-1)  -- 填满宽度
-
-            -- 计算文本行数来设置高度
-            local lineCount = 1
-            for _ in string.gmatch(State.generatedCode, "\n") do
-                lineCount = lineCount + 1
-            end
-            local textHeight = math.max(lineCount * 16 + 10, 100)
-            if textHeight > 300 then textHeight = 300 end
-
-            GUI:InputTextMultiline("##ArgusCodeOutput", State.generatedCode, -1, textHeight, GUI.InputTextFlags_ReadOnly)
-
-            GUI:PopItemWidth()
-            GUI:PopStyleColor(1)
-
-            GUI:Spacing()
-
-            -- 快速操作
-            if GUI:Button("复制全部##ArgusCopyAll", 100, 24) then
-                CopyToClipboard(State.generatedCode)
-            end
-            GUI:SameLine(0, 8)
-            if GUI:Button("重新生成##ArgusRegen", 100, 24) then
-                SyncPlayerPos()
-                GenerateCode()
-                State.lastLog = "代码已重新生成"
-            end
-        else
-            GUI:TextColored(C.muted[1], C.muted[2], C.muted[3], C.muted[4], "点击「生成代码」按钮生成 Lua 代码")
-        end
-
-        GUI:Spacing()
-        GUI:Separator()
-        GUI:Spacing()
-
-        -- =============================================
-        -- 9. 使用说明（折叠）
-        -- =============================================
-        if GUI:CollapsingHeader("使用说明##ArgusHelp") then
-            GUI:Indent(5)
-
-            GUI:TextColored(C.accent[1], C.accent[2], C.accent[3], C.accent[4], "基本流程:")
-            GUI:TextColored(C.white[1], C.white[2], C.white[3], C.white[4], "  1. 选择形状和绘图模式")
-            GUI:TextColored(C.white[1], C.white[2], C.white[3], C.white[4], "  2. 调整形状参数和颜色")
-            GUI:TextColored(C.white[1], C.white[2], C.white[3], C.white[4], "  3. 点击「预览绘图」查看效果")
-            GUI:TextColored(C.white[1], C.white[2], C.white[3], C.white[4], "  4. 满意后「生成代码」->「复制代码」")
-            GUI:TextColored(C.white[1], C.white[2], C.white[3], C.white[4], "  5. 粘贴到 TensorReactions 触发器中使用")
-
-            GUI:Spacing()
-
-            GUI:TextColored(C.accent[1], C.accent[2], C.accent[3], C.accent[4], "模式说明:")
-            GUI:TextColored(C.white[1], C.white[2], C.white[3], C.white[4], "  ShapeDrawer: 推荐，封装颜色和渐变，接口简洁")
-            GUI:TextColored(C.white[1], C.white[2], C.white[3], C.white[4], "  Argus2 底层: 更灵活但参数更多")
-            GUI:TextColored(C.white[1], C.white[2], C.white[3], C.white[4], "  Timed: 绘图持续指定时间，用于单次触发器")
-            GUI:TextColored(C.white[1], C.white[2], C.white[3], C.white[4], "  OnFrame: 每帧绘制，用于 OnFrame 事件")
-            GUI:TextColored(C.danger[1], C.danger[2], C.danger[3], C.danger[4], "  禁止在 OnFrame 中使用 Timed 方法!")
-
-            GUI:Spacing()
-
-            GUI:TextColored(C.accent[1], C.accent[2], C.accent[3], C.accent[4], "附着方式:")
-            GUI:TextColored(C.white[1], C.white[2], C.white[3], C.white[4], "  坐标: 图形固定在指定位置")
-            GUI:TextColored(C.white[1], C.white[2], C.white[3], C.white[4], "  OnEnt: 图形跟随实体移动")
-
-            GUI:Unindent(5)
-        end
+        GUI:EndTabBar()
+        end -- TabBar
 
     end
 
     GUI:End()
+    T.PopTheme()
 end
 
 d("[StringCore] ArgusBuilderUI.lua 加载完成")
