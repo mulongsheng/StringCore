@@ -1084,7 +1084,7 @@ M.DrawArgusBuilderUI = function()
 
         -- ===== 标签页按钮 =====
         do
-            local tabs = { "特效列表", "执行控制", "形状参数", "颜色", "代码", "ME触发器" }
+            local tabs = { "MapEffect", "形状/颜色", "代码", "ME触发器" }
             for i, name in ipairs(tabs) do
                 if i > 1 then GUI:SameLine(0, 2) end
                 local isActive = (State.activeTab == i)
@@ -1107,24 +1107,20 @@ M.DrawArgusBuilderUI = function()
         -- MapEffect 自动刷新
         if M.MapEffectAutoRefresh then M.MapEffectAutoRefresh() end
 
-        -- Tab 1: 特效列表 (MapEffect)
+        -- Tab 1: MapEffect (特效列表 + 执行控制)
         if State.activeTab == 1 then
             if M.DrawEffectListTab then
                 M.DrawEffectListTab()
-            else
-                T.HintText("MapEffectUI 未加载")
             end
-
-        -- Tab 2: 执行控制 (MapEffect)
-        elseif State.activeTab == 2 then
+            GUI:Spacing()
+            GUI:Separator()
+            GUI:Spacing()
             if M.DrawExecControlTab then
                 M.DrawExecControlTab()
-            else
-                T.HintText("MapEffectUI 未加载")
             end
 
-        -- Tab 3: 形状参数
-        elseif State.activeTab == 3 then
+        -- Tab 2: 形状/颜色
+        elseif State.activeTab == 2 then
 
         T.SubHeader("形状选择")
         GUI:PushItemWidth(250)
@@ -1375,7 +1371,11 @@ M.DrawArgusBuilderUI = function()
 
         GUI:PopItemWidth()
 
-        elseif State.activeTab == 4 then
+        GUI:Spacing()
+        GUI:Separator()
+        GUI:Spacing()
+
+        -- 颜色设置 (同 Tab 2)
 
             State.useMoogleDrawer = GUI:Checkbox("使用默认配色 (MoogleDrawer)##ArgusMoogle", State.useMoogleDrawer)
             if GUI:IsItemHovered() then
@@ -1468,7 +1468,7 @@ M.DrawArgusBuilderUI = function()
             GUI:Unindent(5)
         end
 
-        elseif State.activeTab == 5 then
+        elseif State.activeTab == 3 then
 
         -- 操作按钮 (单体生成)
         T.SubHeader("单体绘图")
@@ -1698,7 +1698,7 @@ M.DrawArgusBuilderUI = function()
             GUI:Unindent(5)
         end
 
-        elseif State.activeTab == 6 then
+        elseif State.activeTab == 4 then
 
             -- 代码模式
             local meModeNames = { "TensorReactions OnMapEffect", "Argus.registerOnMapEffect" }
