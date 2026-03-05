@@ -53,6 +53,19 @@ local PresetColors = {
 local ApiLevelNames = { "ShapeDrawer (推荐)", "Argus2 底层", "StaticDrawer (OnFrame专用)" }
 local TimingModeNames = { "Timed (持续时间)", "OnFrame (每帧瞬时)" }
 local AttachModeNames = { "坐标固定", "OnEnt (附着实体)" }
+local HeadingSourceNames = { "玩家朝向", "实体朝向 (OnEnt)", "目标朝向", "固定角度" }
+
+-- OnEnt 方法中 delay 到 headingOffset 之间需要填充的 nil 数量
+-- 对应 API 签名中 oldDraw / doNotDetect / keepLength 等可选参数
+local OnEntNilPadding = {
+    Cone = 2,         -- oldDraw, doNotDetect
+    Rect = 3,         -- keepLength, oldDraw, doNotDetect
+    CenteredRect = 3, -- keepLength, oldDraw, doNotDetect
+    Cross = 2,        -- oldDraw, doNotDetect
+    Arrow = 1,        -- oldDraw
+    Chevron = 1,      -- oldDraw
+    DonutCone = 2,    -- oldDraw, doNotDetect
+}
 
 -- =============================================
 -- UI 内部状态
@@ -66,7 +79,8 @@ local State = {
     posX = 0, posY = 0, posZ = 0,
     usePlayerPos = true,
     followPlayerPos = false,    -- 生成代码用 Player.pos.x/y/z
-    usePlayerHeading = true,  -- 默认使用玩家朝向
+    headingSource = 1,      -- 1=玩家朝向, 2=实体朝向(OnEnt), 3=目标朝向, 4=固定角度
+    quickDirOffset = 0,     -- 快捷方向偏移量（度），前=0 后=180 左=-90 右=+90
 
     -- 形状参数
     radius = 5,
@@ -107,8 +121,7 @@ local State = {
     doNotDetect = false,
     gradientIntensity = 3,
     gradientMinOpacity = 0.05,
-    headingOffset = 0,
-    offsetIsAbsolute = false,
+
 
     -- ShapeDrawer 颜色模式
     useGradient = false,
@@ -169,8 +182,8 @@ local function SyncPlayerPos()
             State.posY = Player.pos.y
             State.posZ = Player.pos.z
         end
-        if State.usePlayerHeading and Player.pos.h then
-            State.heading = math.deg(Player.pos.h)
+        if State.headingSource == 1 and Player.pos.h then
+            State.heading = math.deg(Player.pos.h) + State.quickDirOffset
         end
     end
 end
@@ -234,10 +247,16 @@ local function GenerateCode()
     local needsHeading = (sid == "Cone" or sid == "Rect" or sid == "CenteredRect"
         or sid == "DonutCone" or sid == "Cross" or sid == "Arrow" or sid == "Chevron")
     if needsHeading and not isOnEnt then
-        if State.usePlayerHeading then
-            table.insert(lines, "local heading = Player.pos.h")
+        local offsetStr = State.quickDirOffset ~= 0
+            and string.format(" + math.rad(%s)", FormatNum(State.quickDirOffset)) or ""
+        if State.headingSource == 1 then
+            table.insert(lines, "local heading = Player.pos.h" .. offsetStr)
+        elseif State.headingSource == 3 then
+            table.insert(lines, "local _tgt = Player:GetTarget()")
+            table.insert(lines, "local heading = _tgt and (_tgt.pos.h" .. offsetStr .. ") or 0")
         else
-            table.insert(lines, string.format("local heading = math.rad(%s)  -- %s°", FormatNum(State.heading), FormatNum(State.heading)))
+            -- 固定角度（headingSource==4 或坐标模式下的实体朝向回退）
+            table.insert(lines, string.format("local heading = math.rad(%s)", FormatNum(State.heading)))
         end
         table.insert(lines, "")
     end
@@ -284,8 +303,31 @@ local function GenerateCode()
                 -- addTimedXxxOnEnt
                 local methodName = "addTimed" .. sid .. "OnEnt"
                 table.insert(lines, "-- 附着实体绘图")
-                local entStr = State.useSelfAsEntity and "Player.id" or FormatNum(State.entityID)
-                local tgtStr = State.useCurrentTarget and "Player.targetid" or FormatNum(State.targetID)
+
+                local entStr
+                if State.useSelfAsEntity then
+                    entStr = "Player.id"
+                else
+                    -- ContentID → 运行时 Entity ID（OnEnt 系列方法不接受 ContentID）
+                    table.insert(lines, string.format("local _el = EntityList(\"contentid=%s\")", FormatNum(State.entityID)))
+                    table.insert(lines, "local entID; if _el then for id, _ in pairs(_el) do entID = id; break end end")
+                    table.insert(lines, "if not entID then return end")
+                    table.insert(lines, "")
+                    entStr = "entID"
+                end
+
+                local tgtStr
+                if State.useCurrentTarget then
+                    tgtStr = "Player.targetid"
+                elseif State.targetID ~= 0 then
+                    table.insert(lines, string.format("local _tEl = EntityList(\"contentid=%s\")", FormatNum(State.targetID)))
+                    table.insert(lines, "local tgtID; if _tEl then for id, _ in pairs(_tEl) do tgtID = id; break end end")
+                    table.insert(lines, "")
+                    tgtStr = "tgtID or 0"
+                else
+                    tgtStr = "0"
+                end
+
                 local args = FormatNum(State.timeout) .. ", " .. entStr
 
                 if sid == "Circle" then
@@ -318,11 +360,48 @@ local function GenerateCode()
                     args = args .. ", " .. tgtStr .. ", " .. FormatNum(State.delay)
                 end
 
-                -- 附加 headingOffset / offsetIsAbsolute（如果设置了非默认值）
-                if State.headingOffset ~= 0 then
-                    args = args .. ", " .. FormatNum(math.rad(State.headingOffset))
-                    if State.offsetIsAbsolute then
-                        args = args .. ", true"
+                -- 附加 headingOffset / offsetIsAbsolute（基于朝向来源）
+                local nilCount = OnEntNilPadding[sid]
+                if nilCount and needsHeading then
+                    local offsetRad = math.rad(State.quickDirOffset)
+                    local needsOffset = false
+                    local hoStr, absStr
+
+                    if State.headingSource == 1 then
+                        -- 玩家朝向: offsetIsAbsolute=true, headingOffset=Player.pos.h+偏移
+                        local oStr = State.quickDirOffset ~= 0
+                            and string.format(" + math.rad(%s)", FormatNum(State.quickDirOffset)) or ""
+                        hoStr = "Player.pos.h" .. oStr
+                        absStr = "true"
+                        needsOffset = true
+                    elseif State.headingSource == 2 then
+                        -- 实体朝向: offsetIsAbsolute=false (默认), headingOffset=偏移
+                        if State.quickDirOffset ~= 0 then
+                            hoStr = FormatNum(offsetRad)
+                            needsOffset = true
+                        end
+                    elseif State.headingSource == 3 then
+                        -- 目标朝向: 需要在前面获取目标朝向
+                        table.insert(lines, "local _tgt = Player:GetTarget()")
+                        local oStr = State.quickDirOffset ~= 0
+                            and string.format(" + math.rad(%s)", FormatNum(State.quickDirOffset)) or ""
+                        hoStr = "_tgt and _tgt.pos.h" .. oStr .. " or 0"
+                        absStr = "true"
+                        needsOffset = true
+                        -- 将目标朝向行插入到绘图命令之前
+                    elseif State.headingSource == 4 then
+                        -- 固定角度
+                        hoStr = FormatNum(math.rad(State.heading))
+                        absStr = "true"
+                        needsOffset = true
+                    end
+
+                    if needsOffset and hoStr then
+                        local nils = string.rep(", nil", nilCount)
+                        args = args .. nils .. ", " .. hoStr
+                        if absStr then
+                            args = args .. ", " .. absStr
+                        end
                     end
                 end
 
@@ -435,6 +514,9 @@ local function GenerateCode()
         end
     end
 
+    -- 防止重复触发
+    table.insert(lines, "self.used = true")
+
     -- updateTimed / deleteTimedShape 使用提示
     if isTimed then
         table.insert(lines, "")
@@ -520,27 +602,67 @@ local function ExecutePreview()
     local uuid
 
     if isOnEnt then
-        local entID = State.useSelfAsEntity and Player.id or State.entityID
-        local tgtID = State.useCurrentTarget and (Player.targetid or 0) or State.targetID
+        local entID
+        if State.useSelfAsEntity then
+            entID = Player.id
+        else
+            local el = EntityList("contentid=" .. tostring(State.entityID))
+            if el then for id, _ in pairs(el) do entID = id; break end end
+            if not entID then
+                State.lastLog = "错误: 未找到 ContentID=" .. tostring(State.entityID) .. " 的实体"
+                d("[ArgusBuilder] 错误: 未找到 ContentID=" .. tostring(State.entityID))
+                return
+            end
+        end
+        local tgtID
+        if State.useCurrentTarget then
+            tgtID = Player.targetid or 0
+        elseif State.targetID ~= 0 then
+            local tEl = EntityList("contentid=" .. tostring(State.targetID))
+            if tEl then for id, _ in pairs(tEl) do tgtID = id; break end end
+            tgtID = tgtID or 0
+        else
+            tgtID = 0
+        end
+
+        -- 计算 headingOffset / offsetIsAbsolute (预览用)
+        local ho, hoAbs  -- headingOffset (弧度), offsetIsAbsolute
+        local offsetRad = math.rad(State.quickDirOffset)
+        local needsH = (sid ~= "Circle" and sid ~= "Donut" and sid ~= "Line")
+        if needsH then
+            if State.headingSource == 1 then
+                ho = (Player.pos and Player.pos.h or 0) + offsetRad
+                hoAbs = true
+            elseif State.headingSource == 2 then
+                if State.quickDirOffset ~= 0 then ho = offsetRad end
+            elseif State.headingSource == 3 then
+                local tgt = Player and Player.GetTarget and Player:GetTarget()
+                ho = (tgt and tgt.pos and tgt.pos.h or 0) + offsetRad
+                hoAbs = true
+            elseif State.headingSource == 4 then
+                ho = headingRad
+                hoAbs = true
+            end
+        end
 
         if sid == "Circle" then
             uuid = drawer:addTimedCircleOnEnt(timeout, entID, State.radius, del)
         elseif sid == "Cone" then
-            uuid = drawer:addTimedConeOnEnt(timeout, entID, State.radius, angleRad, tgtID, del)
+            uuid = drawer:addTimedConeOnEnt(timeout, entID, State.radius, angleRad, tgtID, del, nil, nil, ho, hoAbs)
         elseif sid == "Rect" then
-            uuid = drawer:addTimedRectOnEnt(timeout, entID, State.length, State.width, tgtID, del)
+            uuid = drawer:addTimedRectOnEnt(timeout, entID, State.length, State.width, tgtID, del, nil, nil, nil, ho, hoAbs)
         elseif sid == "CenteredRect" then
-            uuid = drawer:addTimedCenteredRectOnEnt(timeout, entID, State.length, State.width, tgtID, del)
+            uuid = drawer:addTimedCenteredRectOnEnt(timeout, entID, State.length, State.width, tgtID, del, nil, nil, nil, ho, hoAbs)
         elseif sid == "Donut" then
             uuid = drawer:addTimedDonutOnEnt(timeout, entID, State.radiusInner, State.radiusOuter, del)
         elseif sid == "DonutCone" then
-            uuid = drawer:addTimedDonutConeOnEnt(timeout, entID, State.radiusInner, State.radiusOuter, angleRad, tgtID, del)
+            uuid = drawer:addTimedDonutConeOnEnt(timeout, entID, State.radiusInner, State.radiusOuter, angleRad, tgtID, del, nil, nil, ho, hoAbs)
         elseif sid == "Cross" then
-            uuid = drawer:addTimedCrossOnEnt(timeout, entID, State.length, State.width, tgtID, del)
+            uuid = drawer:addTimedCrossOnEnt(timeout, entID, State.length, State.width, tgtID, del, nil, nil, ho, hoAbs)
         elseif sid == "Arrow" then
-            uuid = drawer:addTimedArrowOnEnt(timeout, entID, State.baseLength, State.baseWidth, State.tipLength, State.tipWidth, tgtID, del)
+            uuid = drawer:addTimedArrowOnEnt(timeout, entID, State.baseLength, State.baseWidth, State.tipLength, State.tipWidth, tgtID, del, nil, ho, hoAbs)
         elseif sid == "Chevron" then
-            uuid = drawer:addTimedChevronOnEnt(timeout, entID, State.length, State.thickness, tgtID, del)
+            uuid = drawer:addTimedChevronOnEnt(timeout, entID, State.length, State.thickness, tgtID, del, nil, ho, hoAbs)
         end
     else
         if sid == "Circle" then
@@ -696,7 +818,8 @@ local function SnapshotMEStep()
         width       = State.width,
         angle       = State.angle,
         heading     = State.heading,
-        usePlayerHeading = State.usePlayerHeading,
+        headingSource = State.headingSource,
+        quickDirOffset = State.quickDirOffset,
         thickness   = State.thickness,
         baseLength  = State.baseLength,
         baseWidth   = State.baseWidth,
@@ -765,8 +888,13 @@ local function GenerateComboCode()
         table.insert(lines, string.format("local x, y, z = %s, %s, %s",
             FormatNum(State.posX), FormatNum(State.posY), FormatNum(State.posZ)))
     end
-    if State.usePlayerHeading then
-        table.insert(lines, "local heading = Player.pos.h")
+    local offsetStr = State.quickDirOffset ~= 0
+        and string.format(" + math.rad(%s)", FormatNum(State.quickDirOffset)) or ""
+    if State.headingSource == 1 then
+        table.insert(lines, "local heading = Player.pos.h" .. offsetStr)
+    elseif State.headingSource == 3 then
+        table.insert(lines, "local _tgt = Player:GetTarget()")
+        table.insert(lines, "local heading = _tgt and (_tgt.pos.h" .. offsetStr .. ") or 0")
     else
         table.insert(lines, string.format("local heading = math.rad(%s)", FormatNum(State.heading)))
     end
@@ -936,11 +1064,16 @@ local function GenerateMapEffectCode()
         local needsHeading = (entry.shapeId == "Cone" or entry.shapeId == "Rect" or entry.shapeId == "CenteredRect"
             or entry.shapeId == "DonutCone" or entry.shapeId == "Cross" or entry.shapeId == "Arrow" or entry.shapeId == "Chevron")
         if needsHeading then
-            if entry.usePlayerHeading then
-                table.insert(lines, ii .. "local heading = Player.pos.h")
+            local oStr = (entry.quickDirOffset or 0) ~= 0
+                and string.format(" + math.rad(%s)", FormatNum(entry.quickDirOffset or 0)) or ""
+            if (entry.headingSource or 1) == 1 then
+                table.insert(lines, ii .. "local heading = Player.pos.h" .. oStr)
+            elseif (entry.headingSource or 1) == 3 then
+                table.insert(lines, ii .. "local _tgt = Player:GetTarget()")
+                table.insert(lines, ii .. "local heading = _tgt and (_tgt.pos.h" .. oStr .. ") or 0")
             else
-                table.insert(lines, ii .. string.format("local heading = math.rad(%s)  -- %s°",
-                    FormatNum(entry.heading), FormatNum(entry.heading)))
+                table.insert(lines, ii .. string.format("local heading = math.rad(%s)",
+                    FormatNum(entry.heading)))
             end
         end
 
@@ -954,7 +1087,7 @@ local function GenerateMapEffectCode()
             table.insert(lines, ii .. "if res then")
             local di = ii .. "    "
             table.insert(lines, di .. "local x, y, z = Argus.getEffectResourcePosition(res)")
-            if needsHeading and not entry.usePlayerHeading then
+            if needsHeading and (entry.headingSource or 1) == 4 then
                 -- 从特效资源的方向向量推导朝向
                 table.insert(lines, di .. "local dx, dy, dz = Argus.getEffectResourceOrientation(res)")
                 table.insert(lines, di .. "local heading = math.atan2(dx, dz)  -- 从资源方向推导朝向")
@@ -1318,86 +1451,65 @@ M.DrawArgusBuilderUI = function()
             or sid == "DonutCone" or sid == "Cross" or sid == "Arrow" or sid == "Chevron")
         if needsHeading then
             GUI:Spacing()
-            State.usePlayerHeading = GUI:Checkbox("使用玩家朝向##ArgusPlayerH", State.usePlayerHeading)
-            if State.usePlayerHeading then
-                SyncPlayerPos()
-                GUI:SameLine(0, 10)
-                GUI:TextColored(C.hint[1], C.hint[2], C.hint[3], C.hint[4],
-                    string.format("朝向: %.1f°", State.heading))
-            else
-                State.heading = GUI:SliderFloat("朝向 (度)##ArgusHeading", State.heading, -180, 180)
+
+            -- 朝向来源下拉菜单
+            GUI:PushItemWidth(180)
+            local hsChanged
+            State.headingSource, hsChanged = GUI:Combo("朝向来源##ArgusHS", State.headingSource, HeadingSourceNames, #HeadingSourceNames)
+            GUI:PopItemWidth()
+
+            -- "实体朝向" 仅 OnEnt 可用，坐标模式自动回退
+            if State.headingSource == 2 and State.attachMode ~= 2 then
+                GUI:SameLine(0, 5)
+                GUI:TextColored(1, 0.8, 0.2, 1, "(坐标模式下回退为固定角度)")
             end
 
-            -- 快捷方向按钮 (基于玩家当前面向)
+            -- 固定角度：显示角度滑条
+            if State.headingSource == 4 then
+                State.heading = GUI:SliderFloat("固定朝向 (度)##ArgusHeading", State.heading, -180, 180)
+            else
+                -- 非固定角度模式：显示当前朝向来源的实时角度
+                SyncPlayerPos()
+                GUI:SameLine(0, 10)
+                local srcLabel = HeadingSourceNames[State.headingSource] or "?"
+                GUI:TextColored(C.hint[1], C.hint[2], C.hint[3], C.hint[4],
+                    string.format("(%s  偏移: %s°)", srcLabel, FormatNum(State.quickDirOffset)))
+            end
+
+            -- 快捷方向按钮 (设置相对偏移，不改变朝向来源)
             GUI:TextColored(C.hint[1], C.hint[2], C.hint[3], C.hint[4], "快捷方向:")
             GUI:SameLine(0, 5)
 
-            local playerH = 0
-            if Player and Player.pos and Player.pos.h then
-                playerH = math.deg(Player.pos.h)
+            local dirBtnStyle = function()
+                GUI:PushStyleColor(GUI.Col_Button, 0.25, 0.55, 0.80, 0.85)
+                GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.35, 0.65, 0.90, 0.95)
+                GUI:PushStyleColor(GUI.Col_ButtonActive, 0.20, 0.45, 0.70, 1.0)
             end
 
-            -- 归一化角度到 [-180, 180]
-            local function NormalizeAngle(deg)
-                while deg > 180 do deg = deg - 360 end
-                while deg < -180 do deg = deg + 360 end
-                return deg
-            end
-
-            GUI:PushStyleColor(GUI.Col_Button, 0.25, 0.55, 0.80, 0.85)
-            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.35, 0.65, 0.90, 0.95)
-            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.20, 0.45, 0.70, 1.0)
-            if GUI:Button("前##HDir", 30, 20) then
-                State.heading = NormalizeAngle(playerH)
-                State.usePlayerHeading = false
-            end
+            dirBtnStyle()
+            if GUI:Button("前##HDir", 30, 20) then State.quickDirOffset = 0 end
             GUI:PopStyleColor(3)
 
             GUI:SameLine(0, 3)
-            GUI:PushStyleColor(GUI.Col_Button, 0.25, 0.55, 0.80, 0.85)
-            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.35, 0.65, 0.90, 0.95)
-            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.20, 0.45, 0.70, 1.0)
-            if GUI:Button("后##HDir", 30, 20) then
-                State.heading = NormalizeAngle(playerH + 180)
-                State.usePlayerHeading = false
-            end
+            dirBtnStyle()
+            if GUI:Button("后##HDir", 30, 20) then State.quickDirOffset = 180 end
             GUI:PopStyleColor(3)
 
             GUI:SameLine(0, 3)
-            GUI:PushStyleColor(GUI.Col_Button, 0.25, 0.55, 0.80, 0.85)
-            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.35, 0.65, 0.90, 0.95)
-            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.20, 0.45, 0.70, 1.0)
-            if GUI:Button("左##HDir", 30, 20) then
-                State.heading = NormalizeAngle(playerH - 90)
-                State.usePlayerHeading = false
-            end
+            dirBtnStyle()
+            if GUI:Button("左##HDir", 30, 20) then State.quickDirOffset = -90 end
             GUI:PopStyleColor(3)
 
             GUI:SameLine(0, 3)
-            GUI:PushStyleColor(GUI.Col_Button, 0.25, 0.55, 0.80, 0.85)
-            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.35, 0.65, 0.90, 0.95)
-            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.20, 0.45, 0.70, 1.0)
-            if GUI:Button("右##HDir", 30, 20) then
-                State.heading = NormalizeAngle(playerH + 90)
-                State.usePlayerHeading = false
-            end
+            dirBtnStyle()
+            if GUI:Button("右##HDir", 30, 20) then State.quickDirOffset = 90 end
             GUI:PopStyleColor(3)
 
-            -- 相对偏移输入 (正=右偏, 负=左偏)
+            -- 自定义偏移输入 (正=右偏, 负=左偏)
             GUI:SameLine(0, 10)
             GUI:PushItemWidth(80)
-            State._headingOffset = State._headingOffset or 0
-            State._headingOffset = GUI:InputFloat("##HOffsetVal", State._headingOffset, 0, 0)
+            State.quickDirOffset = GUI:InputFloat("偏移##HOffsetVal", State.quickDirOffset, 0, 0)
             GUI:PopItemWidth()
-            GUI:SameLine(0, 3)
-            GUI:PushStyleColor(GUI.Col_Button, 0.55, 0.40, 0.75, 0.85)
-            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.65, 0.50, 0.85, 0.95)
-            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.45, 0.30, 0.65, 1.0)
-            if GUI:Button("偏移##HApply", 40, 20) then
-                State.heading = NormalizeAngle(playerH + State._headingOffset)
-                State.usePlayerHeading = false
-            end
-            GUI:PopStyleColor(3)
             GUI:SameLine(0, 5)
             GUI:TextColored(C.hint[1], C.hint[2], C.hint[3], C.hint[4], "(+右 -左)")
         end

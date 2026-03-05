@@ -114,9 +114,9 @@ M.DrawPartyOverlay = function()
                 local posColor
                 if isSelf then
                     posColor = C.gold
-                elseif posName == "MT" or posName == "ST" then
+                elseif posName == "MT" or posName == "ST" or posName == "T" then
                     posColor = { 0.55, 0.75, 1.0, 1.0 }
-                elseif posName == "H1" or posName == "H2" then
+                elseif posName == "H1" or posName == "H2" or posName == "H" then
                     posColor = C.success
                 else
                     posColor = C.danger

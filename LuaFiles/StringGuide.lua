@@ -37,7 +37,7 @@ M.ArgusBuilderUI = {
     visible = false
 }
 
--- 队伍列表（按顺序：1=MT, 2=ST, 3=H1, 4=H2, 5=D1, 6=D2, 7=D3, 8=D4）
+-- 队伍列表（8人：MT,ST,H1,H2,D1,D2,D3,D4 | 4人：T,H,D1,D2）
 M.PartyList = {}
 
 -- 拖动状态
@@ -85,7 +85,9 @@ M.JobNames = {
 }
 
 -- 职能位置名称
-M.JobPosName = { "MT", "ST", "H1", "H2", "D1", "D2", "D3", "D4" }
+M.JobPosName4 = { "T", "H", "D1", "D2" }
+M.JobPosName8 = { "MT", "ST", "H1", "H2", "D1", "D2", "D3", "D4" }
+M.JobPosName = M.JobPosName8  -- 默认 8 人，LoadParty 时动态切换
 
 -- =============================================
 -- 队伍管理
@@ -304,17 +306,18 @@ M.LoadParty = function()
         return M.IndexOf(M.JobIds, p1.job) < M.IndexOf(M.JobIds, p2.job)
     end)
     
-    -- 4人副本处理
-    if #members == 4 then
-        for i = 1, 4 do
+    -- 4人小队处理（T, H, D1, D2）
+    if #members <= 4 then
+        M.JobPosName = M.JobPosName4
+        for i = 1, #members do
             local member = members[i]
             if M.IsTank(member.job) then
-                if M.Party.MT == nil then
-                    M.Party.MT = member
+                if M.Party.T == nil then
+                    M.Party.T = member
                 end
             elseif M.IsHealer(member.job) then
-                if M.Party.H1 == nil then
-                    M.Party.H1 = member
+                if M.Party.H == nil then
+                    M.Party.H = member
                 end
             else
                 if M.Party.D1 == nil then
@@ -324,12 +327,26 @@ M.LoadParty = function()
                 end
             end
         end
+        -- 同步 PartyList
+        M.PartyList = {}
+        for i, posName in ipairs(M.JobPosName) do
+            M.PartyList[i] = M.Party[posName] or { id = 0, name = "空位", job = 0 }
+        end
         M.GetSelfPos()
-        d("[StringCore] 4人队伍已加载")
+        -- 打印队伍信息
+        local count = 0
+        for i, member in ipairs(M.PartyList) do
+            if member and member.id ~= 0 then
+                count = count + 1
+                d("[StringCore] " .. M.JobPosName[i] .. ": " .. tostring(member.name) .. " (" .. M.GetJobName(member.job) .. ")")
+            end
+        end
+        d("[StringCore] 4人队伍已加载，共 " .. count .. " 人，自己位置: " .. tostring(M.SelfPos))
         return
     end
     
     -- 8人副本
+    M.JobPosName = M.JobPosName8
     local memberHasSet = {}
     
     -- 第一轮：按职业类型分配标准职能
@@ -454,6 +471,9 @@ end
 M.GetTankPartner = function()
     if not Player then return nil end
     if not M.IsTank(Player.job) then return nil end
+    
+    -- 四人小队只有一个坦克，无搭档
+    if M.SelfPos == "T" then return nil end
     
     if M.SelfPos == "MT" then
         return M.Party.ST

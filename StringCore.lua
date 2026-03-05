@@ -10,6 +10,11 @@ local core = StringCore
 local lastMapId = 0
 local lastJob = 0
 
+-- 队伍自动刷新状态
+local pendingPartyRefresh = false
+local partyRefreshRequestTime = 0
+local PARTY_REFRESH_TIMEOUT = 5000  -- 超时 5 秒
+
 -- =============================================
 -- 初始化主模块
 -- =============================================
@@ -66,11 +71,13 @@ core.Update = function()
     if not StringGuide then return end
     if not Player then return end
     
-    -- 检测副本切换
+    -- 检测地图切换 → 标记待刷新队伍
     local currentMapId = Player.localmapid
     if currentMapId ~= lastMapId then
         lastMapId = currentMapId
-        d("[StringCore] 副本切换: " .. tostring(currentMapId))
+        d("[StringCore] 地图切换: " .. tostring(currentMapId))
+        pendingPartyRefresh = true
+        partyRefreshRequestTime = Now()
     end
     
     -- 检测职业切换
@@ -78,6 +85,28 @@ core.Update = function()
     if currentJob ~= lastJob then
         lastJob = currentJob
         d("[StringCore] 职业切换: " .. tostring(currentJob))
+    end
+    
+    -- 延迟刷新队伍：等待队友实体加载完毕
+    if pendingPartyRefresh then
+        local elapsed = TimeSince(partyRefreshRequestTime)
+        -- 超时放弃
+        if elapsed > PARTY_REFRESH_TIMEOUT then
+            pendingPartyRefresh = false
+            d("[StringCore] 队伍刷新超时，未检测到队友")
+            return
+        end
+        -- 检测队友是否已加载
+        if TensorCore and TensorCore.getEntityGroupList then
+            local partyList = TensorCore.getEntityGroupList("Party")
+            local count = 0
+            for _ in pairs(partyList) do count = count + 1 end
+            if count > 0 then
+                pendingPartyRefresh = false
+                StringGuide.LoadParty()
+                d("[StringCore] 地图切换后自动刷新队伍完成")
+            end
+        end
     end
 end
 
