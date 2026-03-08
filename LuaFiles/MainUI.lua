@@ -55,16 +55,6 @@ M.DrawMainUI = function()
             T.SuccessText("*")
         end
 
-        GUI:Separator()
-
-        -- 设置
-        M.DevelopMode = GUI:Checkbox("开发模式##dev", M.DevelopMode)
-        GUI:SameLine(0, 15)
-        M.IgnoreMapCheck = GUI:Checkbox("无视地图##map", M.IgnoreMapCheck)
-        if M.IgnoreMapCheck then
-            GUI:SameLine(0, 4)
-            GUI:TextColored(C.danger[1], C.danger[2], C.danger[3], C.danger[4], "!")
-        end
 
     end
 

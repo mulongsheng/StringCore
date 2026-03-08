@@ -71,13 +71,16 @@ core.Update = function()
     if not StringGuide then return end
     if not Player then return end
     
-    -- 检测地图切换 → 标记待刷新队伍
+    -- 检测地图切换 → mapid 不为 0 时标记待刷新队伍
     local currentMapId = Player.localmapid
     if currentMapId ~= lastMapId then
         lastMapId = currentMapId
         d("[StringCore] 地图切换: " .. tostring(currentMapId))
-        pendingPartyRefresh = true
-        partyRefreshRequestTime = Now()
+        if currentMapId ~= 0 then
+            pendingPartyRefresh = true
+            partyRefreshRequestTime = Now()
+            d("[StringCore] 将在 5 秒后自动刷新队伍")
+        end
     end
     
     -- 检测职业切换

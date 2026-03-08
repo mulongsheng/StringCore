@@ -114,6 +114,7 @@ local State = {
     targetID = 0,
     useCurrentTarget = false,
     useSelfAsEntity = true,
+    renderAllEntities = true,   -- 渲染全部相同 ContentID 实体（默认启用）
 
     -- 高级参数
     delay = 0,
@@ -137,6 +138,7 @@ local State = {
 
     -- 日志
     lastLog = "",
+    lastRunError = "",
 
     -- 组合机制
     comboMode = 1,          -- 1=循环前进, 2=顺序执行, 3=同时执行
@@ -156,6 +158,7 @@ local State = {
     meCodeMode = 1,         -- 1=TensorReactions, 2=Argus.registerOnMapEffect
     mePosMode = 1,          -- 1=固定坐标, 2=特效位置, 3=玩家位置
     meGeneratedCode = "",
+
     -- 当前标签页
     activeTab = 1,
 }
@@ -302,13 +305,26 @@ local function GenerateCode()
             if isOnEnt then
                 -- addTimedXxxOnEnt
                 local methodName = "addTimed" .. sid .. "OnEnt"
-                table.insert(lines, "-- 附着实体绘图")
+                -- 判断是否渲染全部相同 ContentID 实体
+                local renderAll = State.renderAllEntities and not State.useSelfAsEntity
+
+                if renderAll then
+                    table.insert(lines, "-- 附着实体绘图 (渲染全部相同 ContentID 实体)")
+                else
+                    table.insert(lines, "-- 附着实体绘图")
+                end
 
                 local entStr
                 if State.useSelfAsEntity then
                     entStr = "Player.id"
+                elseif renderAll then
+                    -- 遍历全部实体，不 break
+                    table.insert(lines, string.format("local _el = EntityList(\"contentid=%s\")", FormatNum(State.entityID)))
+                    table.insert(lines, "if not _el then return end")
+                    table.insert(lines, "")
+                    entStr = "entID"
                 else
-                    -- ContentID → 运行时 Entity ID（OnEnt 系列方法不接受 ContentID）
+                    -- 只取第一个实体
                     table.insert(lines, string.format("local _el = EntityList(\"contentid=%s\")", FormatNum(State.entityID)))
                     table.insert(lines, "local entID; if _el then for id, _ in pairs(_el) do entID = id; break end end")
                     table.insert(lines, "if not entID then return end")
@@ -327,6 +343,9 @@ local function GenerateCode()
                 else
                     tgtStr = "0"
                 end
+
+                -- 缩进前缀：renderAll 模式下绘图调用在 for 循环内
+                local ii = renderAll and "    " or ""
 
                 local args = FormatNum(State.timeout) .. ", " .. entStr
 
@@ -388,7 +407,6 @@ local function GenerateCode()
                         hoStr = "_tgt and _tgt.pos.h" .. oStr .. " or 0"
                         absStr = "true"
                         needsOffset = true
-                        -- 将目标朝向行插入到绘图命令之前
                     elseif State.headingSource == 4 then
                         -- 固定角度
                         hoStr = FormatNum(math.rad(State.heading))
@@ -405,7 +423,14 @@ local function GenerateCode()
                     end
                 end
 
-                table.insert(lines, "local uuid = drawer:" .. methodName .. "(" .. args .. ")")
+                -- 生成绘图调用
+                if renderAll then
+                    table.insert(lines, "for entID, _ in pairs(_el) do")
+                    table.insert(lines, ii .. "drawer:" .. methodName .. "(" .. args .. ")")
+                    table.insert(lines, "end")
+                else
+                    table.insert(lines, "local uuid = drawer:" .. methodName .. "(" .. args .. ")")
+                end
             else
                 -- addTimedXxx (坐标版本)
                 local methodName = "addTimed" .. sid
@@ -532,6 +557,49 @@ local function GenerateCode()
     return State.generatedCode
 end
 
+
+
+-- =============================================
+-- 动态执行代码字符串
+-- =============================================
+local function ExecuteCodeString(code)
+    if not code or code == "" then
+        State.lastLog = "没有代码可执行"
+        State.lastRunError = ""
+        return
+    end
+
+    -- 清除之前的预览
+    for _, uuid in ipairs(State.previewUUIDs) do
+        if Argus and Argus.deleteTimedShape then
+            Argus.deleteTimedShape(uuid)
+        end
+    end
+    State.previewUUIDs = {}
+
+    -- 在代码头部注入 self 变量，避免 self.used = true 报错
+    local wrappedCode = "local self = {used = false}\n" .. code
+
+    local fn, compileErr = loadstring(wrappedCode)
+    if not fn then
+        State.lastRunError = "编译错误: " .. tostring(compileErr)
+        State.lastLog = "代码编译失败"
+        d("[ArgusBuilder] " .. State.lastRunError)
+        return
+    end
+
+    local ok, runErr = pcall(fn)
+    if not ok then
+        State.lastRunError = "运行错误: " .. tostring(runErr)
+        State.lastLog = "代码运行失败"
+        d("[ArgusBuilder] " .. State.lastRunError)
+    else
+        State.lastRunError = ""
+        State.lastLog = "代码执行成功"
+        d("[ArgusBuilder] 代码执行成功")
+    end
+end
+
 -- =============================================
 -- 预览执行
 -- =============================================
@@ -602,13 +670,27 @@ local function ExecutePreview()
     local uuid
 
     if isOnEnt then
-        local entID
+        -- 收集实体 ID 列表
+        local entIDs = {}
         if State.useSelfAsEntity then
-            entID = Player.id
+            table.insert(entIDs, Player.id)
         else
             local el = EntityList("contentid=" .. tostring(State.entityID))
-            if el then for id, _ in pairs(el) do entID = id; break end end
-            if not entID then
+            if el then
+                if State.renderAllEntities then
+                    -- 渲染全部相同 ContentID 实体
+                    for id, _ in pairs(el) do
+                        table.insert(entIDs, id)
+                    end
+                else
+                    -- 只取第一个
+                    for id, _ in pairs(el) do
+                        table.insert(entIDs, id)
+                        break
+                    end
+                end
+            end
+            if #entIDs == 0 then
                 State.lastLog = "错误: 未找到 ContentID=" .. tostring(State.entityID) .. " 的实体"
                 d("[ArgusBuilder] 错误: 未找到 ContentID=" .. tostring(State.entityID))
                 return
@@ -645,24 +727,30 @@ local function ExecutePreview()
             end
         end
 
-        if sid == "Circle" then
-            uuid = drawer:addTimedCircleOnEnt(timeout, entID, State.radius, del)
-        elseif sid == "Cone" then
-            uuid = drawer:addTimedConeOnEnt(timeout, entID, State.radius, angleRad, tgtID, del, nil, nil, ho, hoAbs)
-        elseif sid == "Rect" then
-            uuid = drawer:addTimedRectOnEnt(timeout, entID, State.length, State.width, tgtID, del, nil, nil, nil, ho, hoAbs)
-        elseif sid == "CenteredRect" then
-            uuid = drawer:addTimedCenteredRectOnEnt(timeout, entID, State.length, State.width, tgtID, del, nil, nil, nil, ho, hoAbs)
-        elseif sid == "Donut" then
-            uuid = drawer:addTimedDonutOnEnt(timeout, entID, State.radiusInner, State.radiusOuter, del)
-        elseif sid == "DonutCone" then
-            uuid = drawer:addTimedDonutConeOnEnt(timeout, entID, State.radiusInner, State.radiusOuter, angleRad, tgtID, del, nil, nil, ho, hoAbs)
-        elseif sid == "Cross" then
-            uuid = drawer:addTimedCrossOnEnt(timeout, entID, State.length, State.width, tgtID, del, nil, nil, ho, hoAbs)
-        elseif sid == "Arrow" then
-            uuid = drawer:addTimedArrowOnEnt(timeout, entID, State.baseLength, State.baseWidth, State.tipLength, State.tipWidth, tgtID, del, nil, ho, hoAbs)
-        elseif sid == "Chevron" then
-            uuid = drawer:addTimedChevronOnEnt(timeout, entID, State.length, State.thickness, tgtID, del, nil, ho, hoAbs)
+        -- 对每个实体执行绘图
+        for _, entID in ipairs(entIDs) do
+            if sid == "Circle" then
+                uuid = drawer:addTimedCircleOnEnt(timeout, entID, State.radius, del)
+            elseif sid == "Cone" then
+                uuid = drawer:addTimedConeOnEnt(timeout, entID, State.radius, angleRad, tgtID, del, nil, nil, ho, hoAbs)
+            elseif sid == "Rect" then
+                uuid = drawer:addTimedRectOnEnt(timeout, entID, State.length, State.width, tgtID, del, nil, nil, nil, ho, hoAbs)
+            elseif sid == "CenteredRect" then
+                uuid = drawer:addTimedCenteredRectOnEnt(timeout, entID, State.length, State.width, tgtID, del, nil, nil, nil, ho, hoAbs)
+            elseif sid == "Donut" then
+                uuid = drawer:addTimedDonutOnEnt(timeout, entID, State.radiusInner, State.radiusOuter, del)
+            elseif sid == "DonutCone" then
+                uuid = drawer:addTimedDonutConeOnEnt(timeout, entID, State.radiusInner, State.radiusOuter, angleRad, tgtID, del, nil, nil, ho, hoAbs)
+            elseif sid == "Cross" then
+                uuid = drawer:addTimedCrossOnEnt(timeout, entID, State.length, State.width, tgtID, del, nil, nil, ho, hoAbs)
+            elseif sid == "Arrow" then
+                uuid = drawer:addTimedArrowOnEnt(timeout, entID, State.baseLength, State.baseWidth, State.tipLength, State.tipWidth, tgtID, del, nil, ho, hoAbs)
+            elseif sid == "Chevron" then
+                uuid = drawer:addTimedChevronOnEnt(timeout, entID, State.length, State.thickness, tgtID, del, nil, ho, hoAbs)
+            end
+            if uuid then
+                table.insert(State.previewUUIDs, uuid)
+            end
         end
     else
         if sid == "Circle" then
@@ -686,10 +774,9 @@ local function ExecutePreview()
         elseif sid == "Line" then
             uuid = drawer:addTimedLine(timeout, x, y, z, State.pos2X, State.pos2Y, State.pos2Z, State.thickness)
         end
-    end
-
-    if uuid then
-        table.insert(State.previewUUIDs, uuid)
+        if uuid then
+            table.insert(State.previewUUIDs, uuid)
+        end
     end
 
     State.lastLog = "预览已执行: " .. shape.name .. " (" .. timeout .. "ms)"
@@ -1281,6 +1368,9 @@ M.DrawArgusBuilderUI = function()
                 M.DrawExecControlTab()
             end
 
+
+
+
         -- Tab 2: 形状/颜色
         elseif State.activeTab == 2 then
 
@@ -1326,8 +1416,13 @@ M.DrawArgusBuilderUI = function()
             State.useSelfAsEntity = GUI:Checkbox("使用自己 (Player.id)##ArgusEntSelf", State.useSelfAsEntity)
             if not State.useSelfAsEntity then
                 GUI:PushItemWidth(150)
-                State.entityID = GUI:InputInt("实体 ID##ArgusEntID", State.entityID)
+                State.entityID = GUI:InputInt("实体 ContentID##ArgusEntID", State.entityID)
                 GUI:PopItemWidth()
+
+                State.renderAllEntities = GUI:Checkbox("渲染全部相同 ContentID 实体##ArgusRenderAll", State.renderAllEntities)
+                if GUI:IsItemHovered() then
+                    GUI:SetTooltip("启用后会为场上所有匹配 ContentID 的实体都画图，而不是只取第一个")
+                end
             end
 
             State.useCurrentTarget = GUI:Checkbox("朝向当前目标 (Player.targetid)##ArgusTgt", State.useCurrentTarget)
@@ -1639,13 +1734,23 @@ M.DrawArgusBuilderUI = function()
         end
         T.PopBtn()
         GUI:SameLine(0, 6)
+        GUI:PushStyleColor(GUI.Col_Button, 0.15, 0.65, 0.15, 0.85)
+        GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.20, 0.75, 0.20, 0.95)
+        GUI:PushStyleColor(GUI.Col_ButtonActive, 0.10, 0.55, 0.10, 1.0)
+        if GUI:Button("运行##ArgusRun", 60, 26) then
+            ExecuteCodeString(State.generatedCode)
+        end
+        GUI:PopStyleColor(3)
+        GUI:SameLine(0, 6)
         T.PushBtn(C.btnStop)
         if GUI:Button("清除##ArgusClear", 60, 26) then
             for _, uuid in ipairs(State.previewUUIDs) do
                 if Argus and Argus.deleteTimedShape then Argus.deleteTimedShape(uuid) end
             end
             State.previewUUIDs = {}
-            State.lastLog = "已清除所有预览"
+            -- 清除通过「运行」创建的绘图（UUID 未被追踪）
+            if Argus and Argus.deleteTimedShape then Argus.deleteTimedShape() end
+            State.lastLog = "已清除所有绘图"
         end
         T.PopBtn()
 
@@ -1654,15 +1759,23 @@ M.DrawArgusBuilderUI = function()
             T.SuccessText(State.lastLog)
         end
 
-        -- 代码展示
+        -- 运行错误信息
+        if State.lastRunError ~= "" then
+            GUI:TextColored(1.0, 0.3, 0.3, 1.0, State.lastRunError)
+        end
+
+        -- 代码编辑器
         if State.generatedCode ~= "" then
             GUI:Spacing()
             GUI:PushStyleColor(GUI.Col_FrameBg, 0.10, 0.08, 0.10, 0.95)
             GUI:PushItemWidth(-1)
             local lc = 1
             for _ in string.gmatch(State.generatedCode, "\n") do lc = lc + 1 end
-            local th = math.min(math.max(lc * 16 + 10, 80), 250)
-            GUI:InputTextMultiline("##ABCodeOut", State.generatedCode, -1, th, GUI.InputTextFlags_ReadOnly)
+            local th = math.min(math.max(lc * 16 + 10, 80), 350)
+            local newCode, changed = GUI:InputTextMultiline("##ABCodeOut", State.generatedCode, -1, th, GUI.InputTextFlags_AllowTabInput)
+            if changed then
+                State.generatedCode = newCode
+            end
             GUI:PopItemWidth()
             GUI:PopStyleColor(1)
         else
@@ -1818,24 +1931,41 @@ M.DrawArgusBuilderUI = function()
             end
             T.PopBtn()
             GUI:SameLine(0, 4)
+            GUI:PushStyleColor(GUI.Col_Button, 0.15, 0.65, 0.15, 0.85)
+            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.20, 0.75, 0.20, 0.95)
+            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.10, 0.55, 0.10, 1.0)
+            if GUI:Button("运行##ComboRun", 55, 24) then
+                ExecuteCodeString(State.comboGeneratedCode)
+            end
+            GUI:PopStyleColor(3)
+            GUI:SameLine(0, 4)
             T.PushBtn(C.btnStop)
             if GUI:Button("清除##ComboClearPrev", 55, 24) then
                 for _, uuid in ipairs(State.previewUUIDs) do
                     if Argus and Argus.deleteTimedShape then Argus.deleteTimedShape(uuid) end
                 end
                 State.previewUUIDs = {}
+                if Argus and Argus.deleteTimedShape then Argus.deleteTimedShape() end
             end
             T.PopBtn()
 
-            -- 组合代码展示
+            -- 运行错误信息
+            if State.lastRunError ~= "" then
+                GUI:TextColored(1.0, 0.3, 0.3, 1.0, State.lastRunError)
+            end
+
+            -- 组合代码编辑器
             if State.comboGeneratedCode ~= "" then
                 GUI:Spacing()
                 GUI:PushStyleColor(GUI.Col_FrameBg, 0.10, 0.08, 0.10, 0.95)
                 GUI:PushItemWidth(-1)
                 local lc = 1
                 for _ in string.gmatch(State.comboGeneratedCode, "\n") do lc = lc + 1 end
-                local th = math.min(math.max(lc * 16 + 10, 80), 250)
-                GUI:InputTextMultiline("##ComboCodeOut", State.comboGeneratedCode, -1, th, GUI.InputTextFlags_ReadOnly)
+                local th = math.min(math.max(lc * 16 + 10, 80), 350)
+                local newCode, changed = GUI:InputTextMultiline("##ComboCodeOut", State.comboGeneratedCode, -1, th, GUI.InputTextFlags_AllowTabInput)
+                if changed then
+                    State.comboGeneratedCode = newCode
+                end
                 GUI:PopItemWidth()
                 GUI:PopStyleColor(1)
             end
@@ -1943,6 +2073,19 @@ M.DrawArgusBuilderUI = function()
                 CopyToClipboard(State.meGeneratedCode)
             end
             T.PopBtn()
+            GUI:SameLine(0, 6)
+            GUI:PushStyleColor(GUI.Col_Button, 0.15, 0.65, 0.15, 0.85)
+            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.20, 0.75, 0.20, 0.95)
+            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.10, 0.55, 0.10, 1.0)
+            if GUI:Button("运行##MERun", 55, 24) then
+                ExecuteCodeString(State.meGeneratedCode)
+            end
+            GUI:PopStyleColor(3)
+
+            -- 运行错误信息
+            if State.lastRunError ~= "" then
+                GUI:TextColored(1.0, 0.3, 0.3, 1.0, State.lastRunError)
+            end
 
             if State.meGeneratedCode ~= "" then
                 GUI:Spacing()
@@ -1950,8 +2093,11 @@ M.DrawArgusBuilderUI = function()
                 GUI:PushItemWidth(-1)
                 local lc = 1
                 for _ in string.gmatch(State.meGeneratedCode, "\n") do lc = lc + 1 end
-                local th = math.min(math.max(lc * 16 + 10, 80), 250)
-                GUI:InputTextMultiline("##MECodeOut", State.meGeneratedCode, -1, th, GUI.InputTextFlags_ReadOnly)
+                local th = math.min(math.max(lc * 16 + 10, 80), 350)
+                local newCode, changed = GUI:InputTextMultiline("##MECodeOut", State.meGeneratedCode, -1, th, GUI.InputTextFlags_AllowTabInput)
+                if changed then
+                    State.meGeneratedCode = newCode
+                end
                 GUI:PopItemWidth()
                 GUI:PopStyleColor(1)
             end
