@@ -55,17 +55,171 @@ local TimingModeNames = { "Timed (持续时间)", "OnFrame (每帧瞬时)" }
 local AttachModeNames = { "坐标固定", "OnEnt (附着实体)" }
 local HeadingSourceNames = { "玩家朝向", "实体朝向 (OnEnt)", "目标朝向", "固定角度" }
 
--- OnEnt 方法中 delay 到 headingOffset 之间需要填充的 nil 数量
--- 对应 API 签名中 oldDraw / doNotDetect / keepLength 等可选参数
-local OnEntNilPadding = {
-    Cone = 2,         -- oldDraw, doNotDetect
-    Rect = 3,         -- keepLength, oldDraw, doNotDetect
-    CenteredRect = 3, -- keepLength, oldDraw, doNotDetect
-    Cross = 2,        -- oldDraw, doNotDetect
-    Arrow = 1,        -- oldDraw
-    Chevron = 1,      -- oldDraw
-    DonutCone = 2,    -- oldDraw, doNotDetect
+-- =============================================
+-- 形状参数配置（消除 if/elseif 分派）
+-- =============================================
+-- 参数序列 token 说明:
+--   "pos" -> "x, y, z"  |  "pos2" -> "x2, y2, z2"
+--   "angle" -> angle 变量  |  "heading" -> heading 变量
+--   "target" -> tgtStr  |  "delay" -> delay 值
+--   其他 token 直接对应 State/step 字段名
+local ShapeParams = {
+    Circle       = { coord = {"pos", "radius", "delay"},
+                     ent   = {"radius", "delay"},
+                     frame = {"pos", "radius"} },
+    Cone         = { coord = {"pos", "radius", "angle", "heading", "delay"},
+                     ent   = {"radius", "angle", "target", "delay"},
+                     frame = {"pos", "radius", "angle", "heading"},
+                     entNilPad = 2 },
+    Rect         = { coord = {"pos", "length", "width", "heading", "delay"},
+                     ent   = {"length", "width", "target", "delay"},
+                     frame = {"pos", "length", "width", "heading"},
+                     entNilPad = 3 },
+    CenteredRect = { coord = {"pos", "length", "width", "heading", "delay"},
+                     ent   = {"length", "width", "target", "delay"},
+                     frame = {"pos", "length", "width", "heading"},
+                     entNilPad = 3 },
+    Donut        = { coord = {"pos", "radiusInner", "radiusOuter", "delay"},
+                     ent   = {"radiusInner", "radiusOuter", "delay"},
+                     frame = {"pos", "radiusInner", "radiusOuter"} },
+    DonutCone    = { coord = {"pos", "radiusInner", "radiusOuter", "angle", "heading", "delay"},
+                     ent   = {"radiusInner", "radiusOuter", "angle", "target", "delay"},
+                     frame = {"pos", "radiusInner", "radiusOuter", "angle", "heading"},
+                     entNilPad = 2 },
+    Cross        = { coord = {"pos", "length", "width", "heading", "delay"},
+                     ent   = {"length", "width", "target", "delay"},
+                     frame = {"pos", "length", "width", "heading"},
+                     entNilPad = 2 },
+    Arrow        = { coord = {"pos", "heading", "baseLength", "baseWidth", "tipLength", "tipWidth", "delay"},
+                     ent   = {"baseLength", "baseWidth", "tipLength", "tipWidth", "target", "delay"},
+                     frame = {"pos", "heading", "baseLength", "baseWidth", "tipLength", "tipWidth"},
+                     entNilPad = 1 },
+    Chevron      = { coord = {"pos", "length", "thickness", "heading", "delay"},
+                     ent   = {"length", "thickness", "target", "delay"},
+                     frame = {"pos", "length", "thickness", "heading"},
+                     entNilPad = 1 },
+    Line         = { coord = {"pos", "pos2", "thickness"},
+                     frame = {"pos", "pos2", "thickness"} },
 }
+
+--- 检查形状是否需要朝向
+local function ShapeNeedsHeading(sid)
+    local p = ShapeParams[sid]
+    if not p or not p.coord then return false end
+    for _, t in ipairs(p.coord) do if t == "heading" then return true end end
+    return false
+end
+
+--- 检查形状是否需要角度变量
+local function ShapeNeedsAngle(sid)
+    local p = ShapeParams[sid]
+    if not p or not p.coord then return false end
+    for _, t in ipairs(p.coord) do if t == "angle" then return true end end
+    return false
+end
+
+--- 将 token 序列解析为代码生成字符串
+local function BuildArgs(tokens, S, f, tgtStr)
+    local parts = {}
+    for _, token in ipairs(tokens) do
+        if     token == "pos"     then table.insert(parts, "x, y, z")
+        elseif token == "pos2"    then table.insert(parts, "x2, y2, z2")
+        elseif token == "angle"   then table.insert(parts, "angle")
+        elseif token == "heading" then table.insert(parts, "heading")
+        elseif token == "target"  then table.insert(parts, tgtStr or "0")
+        elseif token == "delay"   then table.insert(parts, f(S.delay or 0))
+        else                           table.insert(parts, f(S[token]))
+        end
+    end
+    return table.concat(parts, ", ")
+end
+
+--- 构建参数字符串（支持自定义位置/朝向/延迟变量名，用于组合机制）
+local function BuildArgsCustom(tokens, step, f, posVar, headingVar, delayVal)
+    local parts = {}
+    for _, token in ipairs(tokens) do
+        if     token == "pos"     then table.insert(parts, posVar)
+        elseif token == "pos2"    then table.insert(parts, "x2, y2, z2")
+        elseif token == "angle"   then table.insert(parts, "math.rad(" .. f(step.angle) .. ")")
+        elseif token == "heading" then table.insert(parts, headingVar)
+        elseif token == "target"  then table.insert(parts, "0")
+        elseif token == "delay"   then table.insert(parts, f(delayVal))
+        else                           table.insert(parts, f(step[token]))
+        end
+    end
+    return table.concat(parts, ", ")
+end
+
+-- =============================================
+-- 预览绘图分派表
+-- =============================================
+
+--- Timed 坐标模式预览 (d=drawer, t=timeout, h=headingRad, a=angleRad, S=State/step, del=delay)
+local PreviewTimedCoord = {
+    Circle       = function(d, t, x, y, z, h, a, S, del) return d:addTimedCircle(t, x, y, z, S.radius, del) end,
+    Cone         = function(d, t, x, y, z, h, a, S, del) return d:addTimedCone(t, x, y, z, S.radius, a, h, del) end,
+    Rect         = function(d, t, x, y, z, h, a, S, del) return d:addTimedRect(t, x, y, z, S.length, S.width, h, del) end,
+    CenteredRect = function(d, t, x, y, z, h, a, S, del) return d:addTimedCenteredRect(t, x, y, z, S.length, S.width, h, del) end,
+    Donut        = function(d, t, x, y, z, h, a, S, del) return d:addTimedDonut(t, x, y, z, S.radiusInner, S.radiusOuter, del) end,
+    DonutCone    = function(d, t, x, y, z, h, a, S, del) return d:addTimedDonutCone(t, x, y, z, S.radiusInner, S.radiusOuter, a, h, del) end,
+    Cross        = function(d, t, x, y, z, h, a, S, del) return d:addTimedCross(t, x, y, z, S.length, S.width, h, del) end,
+    Arrow        = function(d, t, x, y, z, h, a, S, del) return d:addTimedArrow(t, x, y, z, h, S.baseLength, S.baseWidth, S.tipLength, S.tipWidth, del) end,
+    Chevron      = function(d, t, x, y, z, h, a, S, del) return d:addTimedChevron(t, x, y, z, S.length, S.thickness, h, del) end,
+    Line         = function(d, t, x, y, z, h, a, S, del) return d:addTimedLine(t, x, y, z, S.pos2X, S.pos2Y, S.pos2Z, S.thickness) end,
+}
+
+--- Timed OnEnt 模式预览 (d=drawer, t=timeout, e=entID, tgt=tgtID, S=State, del=delay, ho/hoAbs=headingOffset)
+local PreviewTimedEnt = {
+    Circle       = function(d, t, e, tgt, h, a, S, del, ho, hoAbs) return d:addTimedCircleOnEnt(t, e, S.radius, del) end,
+    Cone         = function(d, t, e, tgt, h, a, S, del, ho, hoAbs) return d:addTimedConeOnEnt(t, e, S.radius, a, tgt, del, nil, nil, ho, hoAbs) end,
+    Rect         = function(d, t, e, tgt, h, a, S, del, ho, hoAbs) return d:addTimedRectOnEnt(t, e, S.length, S.width, tgt, del, nil, nil, nil, ho, hoAbs) end,
+    CenteredRect = function(d, t, e, tgt, h, a, S, del, ho, hoAbs) return d:addTimedCenteredRectOnEnt(t, e, S.length, S.width, tgt, del, nil, nil, nil, ho, hoAbs) end,
+    Donut        = function(d, t, e, tgt, h, a, S, del, ho, hoAbs) return d:addTimedDonutOnEnt(t, e, S.radiusInner, S.radiusOuter, del) end,
+    DonutCone    = function(d, t, e, tgt, h, a, S, del, ho, hoAbs) return d:addTimedDonutConeOnEnt(t, e, S.radiusInner, S.radiusOuter, a, tgt, del, nil, nil, ho, hoAbs) end,
+    Cross        = function(d, t, e, tgt, h, a, S, del, ho, hoAbs) return d:addTimedCrossOnEnt(t, e, S.length, S.width, tgt, del, nil, nil, ho, hoAbs) end,
+    Arrow        = function(d, t, e, tgt, h, a, S, del, ho, hoAbs) return d:addTimedArrowOnEnt(t, e, S.baseLength, S.baseWidth, S.tipLength, S.tipWidth, tgt, del, nil, ho, hoAbs) end,
+    Chevron      = function(d, t, e, tgt, h, a, S, del, ho, hoAbs) return d:addTimedChevronOnEnt(t, e, S.length, S.thickness, tgt, del, nil, ho, hoAbs) end,
+}
+
+-- =============================================
+-- 通用工具函数
+-- =============================================
+
+--- 创建预览用 ShapeDrawer
+local function CreatePreviewDrawer()
+    if State.useMoogleDrawer and TensorCore and TensorCore.getMoogleDrawer then
+        return TensorCore.getMoogleDrawer()
+    end
+    local fR, fG, fB, fA = State.fillR or 0.8, State.fillG or 0, State.fillB or 1, State.fillA or 0.5
+    local oR, oG, oB, oA = State.outlineR or 1, State.outlineG or 1, State.outlineB or 1, State.outlineA or 1
+    local fillU32 = GUI:ColorConvertFloat4ToU32(fR, fG, fB, fA)
+    local outlineU32 = GUI:ColorConvertFloat4ToU32(oR, oG, oB, oA)
+    local startU32, midU32
+    if State.useGradient then
+        startU32 = GUI:ColorConvertFloat4ToU32(State.startR or 1, State.startG or 0, State.startB or 0, State.startA or 0.5)
+        midU32 = GUI:ColorConvertFloat4ToU32(State.midR or 0.5, State.midG or 0, State.midB or 1, State.midA or 0.5)
+        fillU32 = GUI:ColorConvertFloat4ToU32(State.endR or 0.8, State.endG or 0, State.endB or 1, State.endA or 0.5)
+    else
+        startU32 = fillU32
+    end
+    return Argus2.ShapeDrawer:new(startU32, midU32, fillU32, outlineU32, State.outlineThickness or 1.5)
+end
+
+--- 清除所有预览绘图
+local function ClearPreviewShapes()
+    for _, uuid in ipairs(State.previewUUIDs) do
+        if Argus and Argus.deleteTimedShape then
+            Argus.deleteTimedShape(uuid)
+        end
+    end
+    State.previewUUIDs = {}
+end
+
+--- 绘制颜色选择区域（选择器 + 预设按钮）
+local function DrawColorSection(label, rKey, gKey, bKey, aKey)
+    DrawColorPicker(label, rKey, gKey, bKey, aKey)
+    DrawPresetButtons(rKey, gKey, bKey, aKey)
+end
 
 -- =============================================
 -- UI 内部状态
@@ -122,6 +276,8 @@ local State = {
     doNotDetect = false,
     gradientIntensity = 3,
     gradientMinOpacity = 0.05,
+    headingOffset = 0,
+    offsetIsAbsolute = false,
 
 
     -- ShapeDrawer 颜色模式
@@ -247,8 +403,7 @@ local function GenerateCode()
     end
 
     -- 朝向
-    local needsHeading = (sid == "Cone" or sid == "Rect" or sid == "CenteredRect"
-        or sid == "DonutCone" or sid == "Cross" or sid == "Arrow" or sid == "Chevron")
+    local needsHeading = ShapeNeedsHeading(sid)
     if needsHeading and not isOnEnt then
         local offsetStr = State.quickDirOffset ~= 0
             and string.format(" + math.rad(%s)", FormatNum(State.quickDirOffset)) or ""
@@ -265,7 +420,7 @@ local function GenerateCode()
     end
 
     -- 角度（扇形类）
-    local needsAngle = (sid == "Cone" or sid == "DonutCone")
+    local needsAngle = ShapeNeedsAngle(sid)
     if needsAngle then
         table.insert(lines, string.format("local angle = math.rad(%s)  -- %s°", FormatNum(State.angle), FormatNum(State.angle)))
         table.insert(lines, "")
@@ -347,40 +502,10 @@ local function GenerateCode()
                 -- 缩进前缀：renderAll 模式下绘图调用在 for 循环内
                 local ii = renderAll and "    " or ""
 
-                local args = FormatNum(State.timeout) .. ", " .. entStr
-
-                if sid == "Circle" then
-                    args = args .. ", " .. FormatNum(State.radius)
-                    args = args .. ", " .. FormatNum(State.delay)
-                elseif sid == "Cone" then
-                    args = args .. ", " .. FormatNum(State.radius) .. ", angle"
-                    args = args .. ", " .. tgtStr .. ", " .. FormatNum(State.delay)
-                elseif sid == "Rect" then
-                    args = args .. ", " .. FormatNum(State.length) .. ", " .. FormatNum(State.width)
-                    args = args .. ", " .. tgtStr .. ", " .. FormatNum(State.delay)
-                elseif sid == "CenteredRect" then
-                    args = args .. ", " .. FormatNum(State.length) .. ", " .. FormatNum(State.width)
-                    args = args .. ", " .. tgtStr .. ", " .. FormatNum(State.delay)
-                elseif sid == "Donut" then
-                    args = args .. ", " .. FormatNum(State.radiusInner) .. ", " .. FormatNum(State.radiusOuter)
-                    args = args .. ", " .. FormatNum(State.delay)
-                elseif sid == "DonutCone" then
-                    args = args .. ", " .. FormatNum(State.radiusInner) .. ", " .. FormatNum(State.radiusOuter) .. ", angle"
-                    args = args .. ", " .. tgtStr .. ", " .. FormatNum(State.delay)
-                elseif sid == "Cross" then
-                    args = args .. ", " .. FormatNum(State.length) .. ", " .. FormatNum(State.width)
-                    args = args .. ", " .. tgtStr .. ", " .. FormatNum(State.delay)
-                elseif sid == "Arrow" then
-                    args = args .. ", " .. FormatNum(State.baseLength) .. ", " .. FormatNum(State.baseWidth)
-                    args = args .. ", " .. FormatNum(State.tipLength) .. ", " .. FormatNum(State.tipWidth)
-                    args = args .. ", " .. tgtStr .. ", " .. FormatNum(State.delay)
-                elseif sid == "Chevron" then
-                    args = args .. ", " .. FormatNum(State.length) .. ", " .. FormatNum(State.thickness)
-                    args = args .. ", " .. tgtStr .. ", " .. FormatNum(State.delay)
-                end
+                local args = FormatNum(State.timeout) .. ", " .. entStr .. ", " .. BuildArgs(ShapeParams[sid].ent, State, FormatNum, tgtStr)
 
                 -- 附加 headingOffset / offsetIsAbsolute（基于朝向来源）
-                local nilCount = OnEntNilPadding[sid]
+                local nilCount = (ShapeParams[sid] or {}).entNilPad
                 if nilCount and needsHeading then
                     local offsetRad = math.rad(State.quickDirOffset)
                     local needsOffset = false
@@ -435,69 +560,15 @@ local function GenerateCode()
                 -- addTimedXxx (坐标版本)
                 local methodName = "addTimed" .. sid
                 table.insert(lines, "-- 持续绘图 (坐标)")
-                local args = FormatNum(State.timeout)
-
-                if sid == "Circle" then
-                    args = args .. ", x, y, z, " .. FormatNum(State.radius)
-                    args = args .. ", " .. FormatNum(State.delay)
-                elseif sid == "Cone" then
-                    args = args .. ", x, y, z, " .. FormatNum(State.radius) .. ", angle, heading"
-                    args = args .. ", " .. FormatNum(State.delay)
-                elseif sid == "Rect" then
-                    args = args .. ", x, y, z, " .. FormatNum(State.length) .. ", " .. FormatNum(State.width) .. ", heading"
-                    args = args .. ", " .. FormatNum(State.delay)
-                elseif sid == "CenteredRect" then
-                    args = args .. ", x, y, z, " .. FormatNum(State.length) .. ", " .. FormatNum(State.width) .. ", heading"
-                    args = args .. ", " .. FormatNum(State.delay)
-                elseif sid == "Donut" then
-                    args = args .. ", x, y, z, " .. FormatNum(State.radiusInner) .. ", " .. FormatNum(State.radiusOuter)
-                    args = args .. ", " .. FormatNum(State.delay)
-                elseif sid == "DonutCone" then
-                    args = args .. ", x, y, z, " .. FormatNum(State.radiusInner) .. ", " .. FormatNum(State.radiusOuter) .. ", angle, heading"
-                    args = args .. ", " .. FormatNum(State.delay)
-                elseif sid == "Cross" then
-                    args = args .. ", x, y, z, " .. FormatNum(State.length) .. ", " .. FormatNum(State.width) .. ", heading"
-                    args = args .. ", " .. FormatNum(State.delay)
-                elseif sid == "Arrow" then
-                    args = args .. ", x, y, z, heading, " .. FormatNum(State.baseLength) .. ", " .. FormatNum(State.baseWidth)
-                    args = args .. ", " .. FormatNum(State.tipLength) .. ", " .. FormatNum(State.tipWidth)
-                    args = args .. ", " .. FormatNum(State.delay)
-                elseif sid == "Chevron" then
-                    args = args .. ", x, y, z, " .. FormatNum(State.length) .. ", " .. FormatNum(State.thickness) .. ", heading"
-                    args = args .. ", " .. FormatNum(State.delay)
-                elseif sid == "Line" then
-                    args = args .. ", x1, y1, z1, x2, y2, z2"
-                    args = args .. ", " .. FormatNum(State.thickness)
-                end
+                local args = FormatNum(State.timeout) .. ", " .. BuildArgs(ShapeParams[sid].coord, State, FormatNum)
 
                 table.insert(lines, "local uuid = drawer:" .. methodName .. "(" .. args .. ")")
             end
         else
             -- OnFrame 瞬时方法
-            local methodName = "add" .. sid
             table.insert(lines, "-- 瞬时绘图 (仅在 OnFrame 事件中使用)")
-
-            if sid == "Circle" then
-                table.insert(lines, "drawer:addCircle(x, y, z, " .. FormatNum(State.radius) .. ")")
-            elseif sid == "Cone" then
-                table.insert(lines, "drawer:addCone(x, y, z, " .. FormatNum(State.radius) .. ", angle, heading)")
-            elseif sid == "Rect" then
-                table.insert(lines, "drawer:addRect(x, y, z, " .. FormatNum(State.length) .. ", " .. FormatNum(State.width) .. ", heading)")
-            elseif sid == "CenteredRect" then
-                table.insert(lines, "drawer:addCenteredRect(x, y, z, " .. FormatNum(State.length) .. ", " .. FormatNum(State.width) .. ", heading)")
-            elseif sid == "Donut" then
-                table.insert(lines, "drawer:addDonut(x, y, z, " .. FormatNum(State.radiusInner) .. ", " .. FormatNum(State.radiusOuter) .. ")")
-            elseif sid == "DonutCone" then
-                table.insert(lines, "drawer:addDonutCone(x, y, z, " .. FormatNum(State.radiusInner) .. ", " .. FormatNum(State.radiusOuter) .. ", angle, heading)")
-            elseif sid == "Cross" then
-                table.insert(lines, "drawer:addCross(x, y, z, " .. FormatNum(State.length) .. ", " .. FormatNum(State.width) .. ", heading)")
-            elseif sid == "Arrow" then
-                table.insert(lines, "drawer:addArrow(x, y, z, heading, " .. FormatNum(State.baseLength) .. ", " .. FormatNum(State.baseWidth) .. ", " .. FormatNum(State.tipLength) .. ", " .. FormatNum(State.tipWidth) .. ")")
-            elseif sid == "Chevron" then
-                table.insert(lines, "drawer:addChevron(x, y, z, " .. FormatNum(State.length) .. ", " .. FormatNum(State.thickness) .. ", heading)")
-            elseif sid == "Line" then
-                table.insert(lines, "drawer:addLine(x1, y1, z1, x2, y2, z2, " .. FormatNum(State.thickness) .. ")")
-            end
+            local frameArgs = BuildArgs(ShapeParams[sid].frame, State, FormatNum)
+            table.insert(lines, "drawer:add" .. sid .. "(" .. frameArgs .. ")")
         end
     else
         -- === Argus2 底层模式 ===
@@ -569,13 +640,7 @@ local function ExecuteCodeString(code)
         return
     end
 
-    -- 清除之前的预览
-    for _, uuid in ipairs(State.previewUUIDs) do
-        if Argus and Argus.deleteTimedShape then
-            Argus.deleteTimedShape(uuid)
-        end
-    end
-    State.previewUUIDs = {}
+    ClearPreviewShapes()
 
     -- 在代码头部注入 self 变量，避免 self.used = true 报错
     local wrappedCode = "local self = {used = false}\n" .. code
@@ -615,49 +680,8 @@ local function ExecutePreview()
     local shape = GetCurrentShape()
     if not shape then return end
 
-    -- 清除之前的预览
-    for _, uuid in ipairs(State.previewUUIDs) do
-        if Argus and Argus.deleteTimedShape then
-            Argus.deleteTimedShape(uuid)
-        end
-    end
-    State.previewUUIDs = {}
-
-    -- 创建 drawer
-    local drawer
-    if State.useMoogleDrawer and TensorCore and TensorCore.getMoogleDrawer then
-        drawer = TensorCore.getMoogleDrawer()
-    else
-        -- 防御 nil 值
-        local fR = State.fillR or 0.8
-        local fG = State.fillG or 0.0
-        local fB = State.fillB or 1.0
-        local fA = State.fillA or 0.5
-        local oR = State.outlineR or 1.0
-        local oG = State.outlineG or 1.0
-        local oB = State.outlineB or 1.0
-        local oA = State.outlineA or 1.0
-
-        local fillU32 = GUI:ColorConvertFloat4ToU32(fR, fG, fB, fA)
-        local outlineU32 = GUI:ColorConvertFloat4ToU32(oR, oG, oB, oA)
-
-        local startU32, midU32
-        if State.useGradient then
-            startU32 = GUI:ColorConvertFloat4ToU32(State.startR or 1, State.startG or 0, State.startB or 0, State.startA or 0.5)
-            midU32 = GUI:ColorConvertFloat4ToU32(State.midR or 0.5, State.midG or 0, State.midB or 1, State.midA or 0.5)
-            fillU32 = GUI:ColorConvertFloat4ToU32(State.endR or 0.8, State.endG or 0, State.endB or 1, State.endA or 0.5)
-        else
-            startU32 = fillU32
-        end
-
-        drawer = Argus2.ShapeDrawer:new(
-            startU32,
-            midU32,
-            fillU32,
-            outlineU32,
-            State.outlineThickness or 1.5
-        )
-    end
+    ClearPreviewShapes()
+    local drawer = CreatePreviewDrawer()
 
     local sid = shape.id
     local x, y, z = State.posX, State.posY, State.posZ
@@ -678,16 +702,9 @@ local function ExecutePreview()
             local el = EntityList("contentid=" .. tostring(State.entityID))
             if el then
                 if State.renderAllEntities then
-                    -- 渲染全部相同 ContentID 实体
-                    for id, _ in pairs(el) do
-                        table.insert(entIDs, id)
-                    end
+                    for id, _ in pairs(el) do table.insert(entIDs, id) end
                 else
-                    -- 只取第一个
-                    for id, _ in pairs(el) do
-                        table.insert(entIDs, id)
-                        break
-                    end
+                    for id, _ in pairs(el) do table.insert(entIDs, id); break end
                 end
             end
             if #entIDs == 0 then
@@ -708,10 +725,9 @@ local function ExecutePreview()
         end
 
         -- 计算 headingOffset / offsetIsAbsolute (预览用)
-        local ho, hoAbs  -- headingOffset (弧度), offsetIsAbsolute
+        local ho, hoAbs
         local offsetRad = math.rad(State.quickDirOffset)
-        local needsH = (sid ~= "Circle" and sid ~= "Donut" and sid ~= "Line")
-        if needsH then
+        if ShapeNeedsHeading(sid) then
             if State.headingSource == 1 then
                 ho = (Player.pos and Player.pos.h or 0) + offsetRad
                 hoAbs = true
@@ -727,55 +743,20 @@ local function ExecutePreview()
             end
         end
 
-        -- 对每个实体执行绘图
-        for _, entID in ipairs(entIDs) do
-            if sid == "Circle" then
-                uuid = drawer:addTimedCircleOnEnt(timeout, entID, State.radius, del)
-            elseif sid == "Cone" then
-                uuid = drawer:addTimedConeOnEnt(timeout, entID, State.radius, angleRad, tgtID, del, nil, nil, ho, hoAbs)
-            elseif sid == "Rect" then
-                uuid = drawer:addTimedRectOnEnt(timeout, entID, State.length, State.width, tgtID, del, nil, nil, nil, ho, hoAbs)
-            elseif sid == "CenteredRect" then
-                uuid = drawer:addTimedCenteredRectOnEnt(timeout, entID, State.length, State.width, tgtID, del, nil, nil, nil, ho, hoAbs)
-            elseif sid == "Donut" then
-                uuid = drawer:addTimedDonutOnEnt(timeout, entID, State.radiusInner, State.radiusOuter, del)
-            elseif sid == "DonutCone" then
-                uuid = drawer:addTimedDonutConeOnEnt(timeout, entID, State.radiusInner, State.radiusOuter, angleRad, tgtID, del, nil, nil, ho, hoAbs)
-            elseif sid == "Cross" then
-                uuid = drawer:addTimedCrossOnEnt(timeout, entID, State.length, State.width, tgtID, del, nil, nil, ho, hoAbs)
-            elseif sid == "Arrow" then
-                uuid = drawer:addTimedArrowOnEnt(timeout, entID, State.baseLength, State.baseWidth, State.tipLength, State.tipWidth, tgtID, del, nil, ho, hoAbs)
-            elseif sid == "Chevron" then
-                uuid = drawer:addTimedChevronOnEnt(timeout, entID, State.length, State.thickness, tgtID, del, nil, ho, hoAbs)
-            end
-            if uuid then
-                table.insert(State.previewUUIDs, uuid)
+        -- 对每个实体执行绘图（通过分派表）
+        local entFn = PreviewTimedEnt[sid]
+        if entFn then
+            for _, entID in ipairs(entIDs) do
+                uuid = entFn(drawer, timeout, entID, tgtID, headingRad, angleRad, State, del, ho, hoAbs)
+                if uuid then table.insert(State.previewUUIDs, uuid) end
             end
         end
     else
-        if sid == "Circle" then
-            uuid = drawer:addTimedCircle(timeout, x, y, z, State.radius, del)
-        elseif sid == "Cone" then
-            uuid = drawer:addTimedCone(timeout, x, y, z, State.radius, angleRad, headingRad, del)
-        elseif sid == "Rect" then
-            uuid = drawer:addTimedRect(timeout, x, y, z, State.length, State.width, headingRad, del)
-        elseif sid == "CenteredRect" then
-            uuid = drawer:addTimedCenteredRect(timeout, x, y, z, State.length, State.width, headingRad, del)
-        elseif sid == "Donut" then
-            uuid = drawer:addTimedDonut(timeout, x, y, z, State.radiusInner, State.radiusOuter, del)
-        elseif sid == "DonutCone" then
-            uuid = drawer:addTimedDonutCone(timeout, x, y, z, State.radiusInner, State.radiusOuter, angleRad, headingRad, del)
-        elseif sid == "Cross" then
-            uuid = drawer:addTimedCross(timeout, x, y, z, State.length, State.width, headingRad, del)
-        elseif sid == "Arrow" then
-            uuid = drawer:addTimedArrow(timeout, x, y, z, headingRad, State.baseLength, State.baseWidth, State.tipLength, State.tipWidth, del)
-        elseif sid == "Chevron" then
-            uuid = drawer:addTimedChevron(timeout, x, y, z, State.length, State.thickness, headingRad, del)
-        elseif sid == "Line" then
-            uuid = drawer:addTimedLine(timeout, x, y, z, State.pos2X, State.pos2Y, State.pos2Z, State.thickness)
-        end
-        if uuid then
-            table.insert(State.previewUUIDs, uuid)
+        -- 坐标模式绘图（通过分派表）
+        local coordFn = PreviewTimedCoord[sid]
+        if coordFn then
+            uuid = coordFn(drawer, timeout, x, y, z, headingRad, angleRad, State, del)
+            if uuid then table.insert(State.previewUUIDs, uuid) end
         end
     end
 
@@ -919,43 +900,14 @@ local function SnapshotMEStep()
 end
 
 -- =============================================
--- 生成单个形状的绘图调用字符串
+-- 生成单个形状的绘图调用字符串（通过 ShapeParams 配置）
 -- =============================================
 local function GenerateShapeCall(step, posVar, headingVar, delayVal)
     local sid = step.shapeId
-    local del = FormatNum(delayVal)
-
-    if sid == "Circle" then
-        return string.format("drawer:addTimedCircle(timeout, %s, %s, %s)",
-            posVar, FormatNum(step.radius), del)
-    elseif sid == "Cone" then
-        return string.format("drawer:addTimedCone(timeout, %s, %s, math.rad(%s), %s, %s)",
-            posVar, FormatNum(step.radius), FormatNum(step.angle), headingVar, del)
-    elseif sid == "Rect" then
-        return string.format("drawer:addTimedRect(timeout, %s, %s, %s, %s, %s)",
-            posVar, FormatNum(step.length), FormatNum(step.width), headingVar, del)
-    elseif sid == "CenteredRect" then
-        return string.format("drawer:addTimedCenteredRect(timeout, %s, %s, %s, %s, %s)",
-            posVar, FormatNum(step.length), FormatNum(step.width), headingVar, del)
-    elseif sid == "Donut" then
-        return string.format("drawer:addTimedDonut(timeout, %s, %s, %s, %s)",
-            posVar, FormatNum(step.radiusInner), FormatNum(step.radiusOuter), del)
-    elseif sid == "DonutCone" then
-        return string.format("drawer:addTimedDonutCone(timeout, %s, %s, %s, math.rad(%s), %s, %s)",
-            posVar, FormatNum(step.radiusInner), FormatNum(step.radiusOuter),
-            FormatNum(step.angle), headingVar, del)
-    elseif sid == "Cross" then
-        return string.format("drawer:addTimedCross(timeout, %s, %s, %s, %s, %s)",
-            posVar, FormatNum(step.length), FormatNum(step.width), headingVar, del)
-    elseif sid == "Arrow" then
-        return string.format("drawer:addTimedArrow(timeout, %s, %s, %s, %s, %s, %s, %s)",
-            posVar, headingVar, FormatNum(step.baseLength), FormatNum(step.baseWidth),
-            FormatNum(step.tipLength), FormatNum(step.tipWidth), del)
-    elseif sid == "Chevron" then
-        return string.format("drawer:addTimedChevron(timeout, %s, %s, %s, %s, %s)",
-            posVar, FormatNum(step.length), FormatNum(step.thickness), headingVar, del)
-    end
-    return "-- 不支持的形状: " .. sid
+    local params = ShapeParams[sid]
+    if not params or not params.coord then return "-- 不支持的形状: " .. sid end
+    local args = BuildArgsCustom(params.coord, step, FormatNum, posVar, headingVar, delayVal)
+    return "drawer:addTimed" .. sid .. "(timeout, " .. args .. ")"
 end
 
 -- =============================================
@@ -1148,8 +1100,7 @@ local function GenerateMapEffectCode()
         local ii = bi .. "    "  -- inner indent
 
         -- Heading
-        local needsHeading = (entry.shapeId == "Cone" or entry.shapeId == "Rect" or entry.shapeId == "CenteredRect"
-            or entry.shapeId == "DonutCone" or entry.shapeId == "Cross" or entry.shapeId == "Arrow" or entry.shapeId == "Chevron")
+        local needsHeading = ShapeNeedsHeading(entry.shapeId)
         if needsHeading then
             local oStr = (entry.quickDirOffset or 0) ~= 0
                 and string.format(" + math.rad(%s)", FormatNum(entry.quickDirOffset or 0)) or ""
@@ -1214,64 +1165,19 @@ local function ExecuteComboPreview()
     end
 
     SyncPlayerPos()
-
-    -- 清除之前的预览
-    for _, uuid in ipairs(State.previewUUIDs) do
-        if Argus and Argus.deleteTimedShape then
-            Argus.deleteTimedShape(uuid)
-        end
-    end
-    State.previewUUIDs = {}
-
-    -- 创建 drawer
-    local drawer
-    if State.useMoogleDrawer and TensorCore and TensorCore.getMoogleDrawer then
-        drawer = TensorCore.getMoogleDrawer()
-    else
-        local fR, fG, fB, fA = State.fillR or 0.8, State.fillG or 0, State.fillB or 1, State.fillA or 0.5
-        local oR, oG, oB, oA = State.outlineR or 1, State.outlineG or 1, State.outlineB or 1, State.outlineA or 1
-        local fillU32 = GUI:ColorConvertFloat4ToU32(fR, fG, fB, fA)
-        local outlineU32 = GUI:ColorConvertFloat4ToU32(oR, oG, oB, oA)
-        local startU32, midU32 = fillU32, nil
-        if State.useGradient then
-            startU32 = GUI:ColorConvertFloat4ToU32(State.startR or 1, State.startG or 0, State.startB or 0, State.startA or 0.5)
-            midU32 = GUI:ColorConvertFloat4ToU32(State.midR or 0.5, State.midG or 0, State.midB or 1, State.midA or 0.5)
-            fillU32 = GUI:ColorConvertFloat4ToU32(State.endR or 0.8, State.endG or 0, State.endB or 1, State.endA or 0.5)
-        end
-        drawer = Argus2.ShapeDrawer:new(startU32, midU32, fillU32, outlineU32, State.outlineThickness or 1.5)
-    end
+    ClearPreviewShapes()
+    local drawer = CreatePreviewDrawer()
 
     local x, y, z = State.posX, State.posY, State.posZ
     local headingRad = math.rad(State.heading)
     local timeout = State.timeout
     local mode = State.comboMode
 
-    -- 执行单个步骤的预览绘图
+    -- 执行单个步骤的预览绘图（通过分派表）
     local function previewStep(step, px, py, pz, hRad, del)
-        local sid = step.shapeId
-        local angleRad = math.rad(step.angle or 90)
-        local uuid
-
-        if sid == "Circle" then
-            uuid = drawer:addTimedCircle(timeout, px, py, pz, step.radius, del)
-        elseif sid == "Cone" then
-            uuid = drawer:addTimedCone(timeout, px, py, pz, step.radius, angleRad, hRad, del)
-        elseif sid == "Rect" then
-            uuid = drawer:addTimedRect(timeout, px, py, pz, step.length, step.width, hRad, del)
-        elseif sid == "CenteredRect" then
-            uuid = drawer:addTimedCenteredRect(timeout, px, py, pz, step.length, step.width, hRad, del)
-        elseif sid == "Donut" then
-            uuid = drawer:addTimedDonut(timeout, px, py, pz, step.radiusInner, step.radiusOuter, del)
-        elseif sid == "DonutCone" then
-            uuid = drawer:addTimedDonutCone(timeout, px, py, pz, step.radiusInner, step.radiusOuter, angleRad, hRad, del)
-        elseif sid == "Cross" then
-            uuid = drawer:addTimedCross(timeout, px, py, pz, step.length, step.width, hRad, del)
-        elseif sid == "Arrow" then
-            uuid = drawer:addTimedArrow(timeout, px, py, pz, hRad, step.baseLength, step.baseWidth, step.tipLength, step.tipWidth, del)
-        elseif sid == "Chevron" then
-            uuid = drawer:addTimedChevron(timeout, px, py, pz, step.length, step.thickness, hRad, del)
-        end
-
+        local fn = PreviewTimedCoord[step.shapeId]
+        if not fn then return end
+        local uuid = fn(drawer, timeout, px, py, pz, hRad, math.rad(step.angle or 90), step, del)
         if uuid then table.insert(State.previewUUIDs, uuid) end
     end
 
@@ -1285,6 +1191,7 @@ local function ExecuteComboPreview()
                 length = State.length, width = State.width, angle = State.angle,
                 thickness = State.thickness, baseLength = State.baseLength,
                 baseWidth = State.baseWidth, tipLength = State.tipLength, tipWidth = State.tipWidth,
+                pos2X = State.pos2X, pos2Y = State.pos2Y, pos2Z = State.pos2Z
             }
             for i = 0, State.loopCount - 1 do
                 local pos = TensorCore.getPosInDirection({x=x, y=y, z=z}, headingRad, i * State.loopStepDist)
@@ -1542,8 +1449,7 @@ M.DrawArgusBuilderUI = function()
         end
 
         -- 朝向设置（Circle, Donut, Line 不需要朝向）
-        local needsHeading = (sid == "Cone" or sid == "Rect" or sid == "CenteredRect"
-            or sid == "DonutCone" or sid == "Cross" or sid == "Arrow" or sid == "Chevron")
+        local needsHeading = ShapeNeedsHeading(sid)
         if needsHeading then
             GUI:Spacing()
 
@@ -1632,34 +1538,29 @@ M.DrawArgusBuilderUI = function()
                     -- === 渐变色模式 ===
                     GUI:Indent(10)
                     GUI:TextColored(C.section[1], C.section[2], C.section[3], C.section[4], "起始颜色:")
-                    DrawColorPicker("起始", "startR", "startG", "startB", "startA")
-                    DrawPresetButtons("startR", "startG", "startB", "startA")
+                    DrawColorSection("起始", "startR", "startG", "startB", "startA")
 
                     GUI:Spacing()
 
                     GUI:TextColored(C.section[1], C.section[2], C.section[3], C.section[4], "中间颜色:")
-                    DrawColorPicker("中间", "midR", "midG", "midB", "midA")
-                    DrawPresetButtons("midR", "midG", "midB", "midA")
+                    DrawColorSection("中间", "midR", "midG", "midB", "midA")
 
                     GUI:Spacing()
 
                     GUI:TextColored(C.section[1], C.section[2], C.section[3], C.section[4], "结束颜色:")
-                    DrawColorPicker("结束", "endR", "endG", "endB", "endA")
-                    DrawPresetButtons("endR", "endG", "endB", "endA")
+                    DrawColorSection("结束", "endR", "endG", "endB", "endA")
                     GUI:Unindent(10)
                 else
                     -- === 单一填充色模式 ===
                     GUI:TextColored(C.section[1], C.section[2], C.section[3], C.section[4], "填充颜色:")
-                    DrawColorPicker("填充", "fillR", "fillG", "fillB", "fillA")
-                    DrawPresetButtons("fillR", "fillG", "fillB", "fillA")
+                    DrawColorSection("填充", "fillR", "fillG", "fillB", "fillA")
                 end
 
                 GUI:Spacing()
 
                 -- 描边颜色（始终显示）
                 GUI:TextColored(C.section[1], C.section[2], C.section[3], C.section[4], "描边颜色:")
-                DrawColorPicker("描边", "outlineR", "outlineG", "outlineB", "outlineA")
-                DrawPresetButtons("outlineR", "outlineG", "outlineB", "outlineA")
+                DrawColorSection("描边", "outlineR", "outlineG", "outlineB", "outlineA")
                 GUI:PushItemWidth(150)
                 State.outlineThickness = GUI:SliderFloat("描边粗细##ArgusOT", State.outlineThickness, 0.5, 5)
                 GUI:PopItemWidth()
@@ -1744,10 +1645,7 @@ M.DrawArgusBuilderUI = function()
         GUI:SameLine(0, 6)
         T.PushBtn(C.btnStop)
         if GUI:Button("清除##ArgusClear", 60, 26) then
-            for _, uuid in ipairs(State.previewUUIDs) do
-                if Argus and Argus.deleteTimedShape then Argus.deleteTimedShape(uuid) end
-            end
-            State.previewUUIDs = {}
+            ClearPreviewShapes()
             -- 清除通过「运行」创建的绘图（UUID 未被追踪）
             if Argus and Argus.deleteTimedShape then Argus.deleteTimedShape() end
             State.lastLog = "已清除所有绘图"
@@ -1941,10 +1839,7 @@ M.DrawArgusBuilderUI = function()
             GUI:SameLine(0, 4)
             T.PushBtn(C.btnStop)
             if GUI:Button("清除##ComboClearPrev", 55, 24) then
-                for _, uuid in ipairs(State.previewUUIDs) do
-                    if Argus and Argus.deleteTimedShape then Argus.deleteTimedShape(uuid) end
-                end
-                State.previewUUIDs = {}
+                ClearPreviewShapes()
                 if Argus and Argus.deleteTimedShape then Argus.deleteTimedShape() end
             end
             T.PopBtn()
