@@ -53,9 +53,20 @@ core.Initialize = function()
         id = "StringCore",
         name = "StringCore",
         onClick = function()
-            if StringGuide and StringGuide.UI then
-                StringGuide.UI.open = not StringGuide.UI.open
+            if not StringGuide or not StringGuide.ArgusBuilderUI then
+                return
             end
+
+            if StringGuide.ArgusBuilderUI.open then
+                StringGuide.ArgusBuilderUI.open = false
+                return
+            end
+
+            StringGuide.ArgusBuilderUI.requestedTab = (StringGuide.ArgusBuilderTabs and StringGuide.ArgusBuilderTabs.BUILDER) or 1
+            StringGuide.ArgusBuilderUI.open = true
+
+            if StringGuide.UI then StringGuide.UI.open = false end
+            if StringGuide.PartyOverlay then StringGuide.PartyOverlay.open = false end
         end,
         tooltip = tooltip,
         texture = iconPath
@@ -118,19 +129,8 @@ end
 -- =============================================
 core.Draw = function()
     if not StringGuide then return end
-    if not StringGuide.UI then return end
-    
-    -- 绘制主界面
-    if StringGuide.UI.open and StringGuide.DrawMainUI then
-        StringGuide.DrawMainUI()
-    end
-    
-    -- 绘制队伍悬浮窗
-    if StringGuide.PartyOverlay and StringGuide.PartyOverlay.open and StringGuide.DrawPartyOverlay then
-        StringGuide.DrawPartyOverlay()
-    end
-    
-    -- 绘制合并工具箱 (MapEffect + Argus)
+
+    -- 仅保留 Argus Builder 入口及其相关页签
     if StringGuide.ArgusBuilderUI and StringGuide.ArgusBuilderUI.open and StringGuide.DrawArgusBuilderUI then
         StringGuide.DrawArgusBuilderUI()
     end

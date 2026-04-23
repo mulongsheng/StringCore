@@ -31,10 +31,18 @@ M.MapEffectUI = {
     visible = false
 }
 
+M.ArgusBuilderTabs = {
+    BUILDER = 1,
+    CODE = 2,
+    MAP_EFFECT = 3,
+    ME_TRIGGER = 4,
+}
+
 -- Argus 代码生成器 UI 状态
 M.ArgusBuilderUI = {
     open = false,
-    visible = false
+    visible = false,
+    requestedTab = M.ArgusBuilderTabs.BUILDER,
 }
 
 -- 队伍列表（8人：MT,ST,H1,H2,D1,D2,D3,D4 | 4人：T,H,D1,D2）

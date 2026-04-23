@@ -2,5 +2,5 @@
 Name=StringCore
 Dependencies=minionlib,TensorCore
 Version=1
-Files=LuaFiles\\StringGuide.lua,LuaFiles\\UITheme.lua,LuaFiles\\MainUI.lua,LuaFiles\\MapEffectUI.lua,LuaFiles\\ArgusBuilderUI.lua,StringCore.lua
+Files=LuaFiles\\StringGuide.lua,LuaFiles\\UITheme.lua,LuaFiles\\MapEffectUI.lua,LuaFiles\\ArgusBuilderUI.lua,StringCore.lua
 Enabled=1

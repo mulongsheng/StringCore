@@ -431,11 +431,19 @@ local function DrawDetailPanel(entry)
         M._mapEffectTransfer = {
             a1 = entry.index, a3 = nil,
             posX = entry.position.x, posY = entry.position.y, posZ = entry.position.z,
+            resourcePath = entry.path,
+            resourceType = entry.type,
+            resourceDirX = entry.orientation and entry.orientation.dir and entry.orientation.dir.x or 0,
+            resourceDirY = entry.orientation and entry.orientation.dir and entry.orientation.dir.y or 0,
+            resourceDirZ = entry.orientation and entry.orientation.dir and entry.orientation.dir.z or 0,
         }
         if Argus and Argus.getEffectResourceScriptFlagForIndex then
             M._mapEffectTransfer.a3 = Argus.getEffectResourceScriptFlagForIndex(entry.index)
         end
-        if M.ArgusBuilderUI then M.ArgusBuilderUI.open = true end
+        if M.ArgusBuilderUI then
+            M.ArgusBuilderUI.requestedTab = (M.ArgusBuilderTabs and M.ArgusBuilderTabs.ME_TRIGGER) or 4
+            M.ArgusBuilderUI.open = true
+        end
         d("[MapEffect] 已发送到生成器: Index=" .. entry.index)
     end
     T.PopBtn()
@@ -637,13 +645,24 @@ M.DrawExecControlTab = function()
         if Argus and Argus.getMapEffectResource then
             local res = Argus.getMapEffectResource(State.runIndex)
             if res then
+                local _, resPath, resType = Argus.getEffectResourceInfo(res)
                 local px, py, pz = Argus.getEffectResourcePosition(res)
+                local dx, dy, dz = Argus.getEffectResourceOrientation(res)
                 if px then
                     M._mapEffectTransfer.posX = px
                     M._mapEffectTransfer.posY = py
                     M._mapEffectTransfer.posZ = pz
                 end
+                M._mapEffectTransfer.resourcePath = resPath or ""
+                M._mapEffectTransfer.resourceType = resType or 0
+                M._mapEffectTransfer.resourceDirX = dx or 0
+                M._mapEffectTransfer.resourceDirY = dy or 0
+                M._mapEffectTransfer.resourceDirZ = dz or 0
             end
+        end
+        if M.ArgusBuilderUI then
+            M.ArgusBuilderUI.requestedTab = (M.ArgusBuilderTabs and M.ArgusBuilderTabs.ME_TRIGGER) or 4
+            M.ArgusBuilderUI.open = true
         end
     end
     T.PopBtn()

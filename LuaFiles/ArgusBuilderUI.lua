@@ -8,6 +8,12 @@ if not M then return end
 
 local T = M.UITheme
 local C = T.C
+local TABS = M.ArgusBuilderTabs or {
+    BUILDER = 1,
+    CODE = 2,
+    MAP_EFFECT = 3,
+    ME_TRIGGER = 4,
+}
 
 -- =============================================
 -- 形状定义
@@ -25,11 +31,15 @@ local ShapeDefinitions = {
     { id = "Line",         name = "线条" },
 }
 
--- 形状名称列表（用于下拉菜单）
-local ShapeDisplayNames = {}
-for _, s in ipairs(ShapeDefinitions) do
-    table.insert(ShapeDisplayNames, s.name)
+-- 工具：从定义表提取名称列表
+local function ExtractNames(defs)
+    local names = {}
+    for _, d in ipairs(defs) do names[#names + 1] = d.name end
+    return names
 end
+
+-- 形状名称列表（用于下拉菜单）
+local ShapeDisplayNames = ExtractNames(ShapeDefinitions)
 
 -- =============================================
 -- 预设颜色
@@ -59,8 +69,22 @@ local MechanicTypes = {
     { id = "knockback",name = "击退",     fill = {0.0, 0.97, 1.0, 0.45}, outline = {0.5, 1.0, 1.0, 1.0} },
     { id = "info",     name = "信息",     fill = {0.0, 0.44, 1.0, 0.45}, outline = {0.4, 0.7, 1.0, 1.0} },
 }
-local MechanicTypeNames = {}
-for _, mt in ipairs(MechanicTypes) do table.insert(MechanicTypeNames, mt.name) end
+local MechanicTypeNames = ExtractNames(MechanicTypes)
+
+-- 前置声明 State（供后面的 local function 引用）
+local State
+
+local function ApplyMechanicStyle(idx)
+    local mt = MechanicTypes[idx]
+    if not mt then return end
+    State.mechanicType = idx
+    if idx > 1 then
+        State.useMoogleDrawer = false
+        State.useGradient = false
+        State.fillR, State.fillG, State.fillB, State.fillA = mt.fill[1], mt.fill[2], mt.fill[3], mt.fill[4]
+        State.outlineR, State.outlineG, State.outlineB, State.outlineA = mt.outline[1], mt.outline[2], mt.outline[3], mt.outline[4]
+    end
+end
 
 -- =============================================
 -- 快速样式模板 (形状 + 尺寸 + 机制类型 一键填充)
@@ -83,9 +107,6 @@ local QuickTemplates = {
     { name = "击退箭头",       shape = "Arrow",  mechanic = 6, params = { baseLength = 12, baseWidth = 3, tipLength = 4, tipWidth = 5 } },
 }
 
--- 前置声明 State（供后面的 local function 引用）
-local State
-
 --- 应用快速模板到 State
 local function ApplyQuickTemplate(tmpl)
     -- 找到形状索引
@@ -99,27 +120,13 @@ local function ApplyQuickTemplate(tmpl)
     -- 应用机制类型
     State.mechanicType = tmpl.mechanic
     -- 应用机制配色
-    local mt = MechanicTypes[tmpl.mechanic]
-    if mt then
-        State.useMoogleDrawer = false
-        State.useGradient = false
-        State.fillR, State.fillG, State.fillB, State.fillA = mt.fill[1], mt.fill[2], mt.fill[3], mt.fill[4]
-        State.outlineR, State.outlineG, State.outlineB, State.outlineA = mt.outline[1], mt.outline[2], mt.outline[3], mt.outline[4]
-    end
+    ApplyMechanicStyle(tmpl.mechanic)
     State.generatedCode = ""
 end
 
 --- 应用机制类型配色 (仅改颜色，不改形状)
 local function ApplyMechanicColor(idx)
-    local mt = MechanicTypes[idx]
-    if not mt then return end
-    State.mechanicType = idx
-    if idx > 1 then
-        State.useMoogleDrawer = false
-        State.useGradient = false
-        State.fillR, State.fillG, State.fillB, State.fillA = mt.fill[1], mt.fill[2], mt.fill[3], mt.fill[4]
-        State.outlineR, State.outlineG, State.outlineB, State.outlineA = mt.outline[1], mt.outline[2], mt.outline[3], mt.outline[4]
-    end
+    ApplyMechanicStyle(idx)
 end
 
 -- =============================================
@@ -128,7 +135,16 @@ end
 local ApiLevelNames = { "ShapeDrawer (推荐)", "Argus2 底层", "StaticDrawer (OnFrame专用)" }
 local TimingModeNames = { "Timed (持续时间)", "OnFrame (每帧瞬时)" }
 local AttachModeNames = { "坐标固定", "OnEnt (附着实体)" }
-local HeadingSourceNames = { "玩家朝向", "实体朝向 (OnEnt)", "目标朝向", "固定角度" }
+local EntityResolveModeNames = { "自身", "ContentID", "名称", "自定义过滤串" }
+local TargetResolveModeNames = { "无目标", "当前目标", "ContentID", "名称", "自定义过滤串" }
+local HeadingSourceNames = {
+    "玩家朝向",
+    "实体/资源朝向",
+    "目标朝向",
+    "固定角度",
+    "指向坐标点",
+    "朝向玩家位置",
+}
 
 -- =============================================
 -- 形状参数配置（消除 if/elseif 分派）
@@ -306,6 +322,48 @@ end
 local DrawColorSection
 
 -- =============================================
+-- 通用 UI 辅助函数
+-- =============================================
+
+--- 纯色色块按钮样式（三态同色，用于颜色预览）
+local function PushSolidColor(r, g, b, a)
+    GUI:PushStyleColor(GUI.Col_Button, r, g, b, a)
+    GUI:PushStyleColor(GUI.Col_ButtonHovered, r, g, b, a)
+    GUI:PushStyleColor(GUI.Col_ButtonActive, r, g, b, a)
+end
+local function PopSolidColor() GUI:PopStyleColor(3) end
+
+--- 悬浮提示（在最近一个控件上触发）
+local function ItemTooltip(text)
+    if GUI:IsItemHovered() then GUI:SetTooltip(text) end
+end
+
+--- 代码编辑文本框（统一样式，返回 newCode, changed）
+local function DrawCodeTextbox(id, code, maxHeight)
+    maxHeight = maxHeight or 350
+    GUI:PushStyleColor(GUI.Col_FrameBg, 0.10, 0.08, 0.10, 0.95)
+    GUI:PushItemWidth(-1)
+    local lc = 1
+    for _ in string.gmatch(code, "\n") do lc = lc + 1 end
+    local th = math.min(math.max(lc * 16 + 10, 80), maxHeight)
+    local newCode, changed = GUI:InputTextMultiline(id, code, -1, th, GUI.InputTextFlags_AllowTabInput)
+    GUI:PopItemWidth()
+    GUI:PopStyleColor(1)
+    if changed then return newCode, true end
+    return code, false
+end
+
+--- 绿色「运行」按钮
+local function DrawRunBtn(label, w, h)
+    GUI:PushStyleColor(GUI.Col_Button, 0.15, 0.65, 0.15, 0.85)
+    GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.20, 0.75, 0.20, 0.95)
+    GUI:PushStyleColor(GUI.Col_ButtonActive, 0.10, 0.55, 0.10, 1.0)
+    local clicked = GUI:Button(label, w or 0, h or 28)
+    GUI:PopStyleColor(3)
+    return clicked
+end
+
+-- =============================================
 -- UI 内部状态
 -- =============================================
 State = {
@@ -317,8 +375,11 @@ State = {
     posX = 0, posY = 0, posZ = 0,
     usePlayerPos = true,
     followPlayerPos = false,    -- 生成代码用 Player.pos.x/y/z
-    headingSource = 1,      -- 1=玩家朝向, 2=实体朝向(OnEnt), 3=目标朝向, 4=固定角度
+    headingSource = 1,      -- 1=玩家朝向, 2=实体/资源朝向, 3=目标朝向, 4=固定角度, 5=指向坐标点, 6=朝向玩家位置
     quickDirOffset = 0,     -- 快捷方向偏移量（度），前=0 后=180 左=-90 右=+90
+    headingTargetX = 0,
+    headingTargetY = 0,
+    headingTargetZ = 0,
 
     -- 形状参数
     radius = 5,
@@ -348,8 +409,18 @@ State = {
     attachMode = 1,    -- 1=坐标, 2=OnEnt
 
     -- OnEnt 参数
+    entityResolveMode = 1,     -- 1=自身, 2=ContentID, 3=名称, 4=自定义过滤串
     entityID = 0,
+    entityName = "",
+    entityFilter = "",
+    entityRequireVisible = false,
+    entityRequireTargetable = false,
+    targetResolveMode = 1,     -- 1=无目标, 2=当前目标, 3=ContentID, 4=名称, 5=自定义过滤串
     targetID = 0,
+    targetName = "",
+    targetFilter = "",
+    targetRequireVisible = false,
+    targetRequireTargetable = false,
     useCurrentTarget = false,
     useSelfAsEntity = true,
     renderAllEntities = true,   -- 渲染全部相同 ContentID 实体（默认启用）
@@ -397,10 +468,15 @@ State = {
     meLabel = "",           -- 机制备注
     meCodeMode = 1,         -- 1=TensorReactions, 2=Argus.registerOnMapEffect
     mePosMode = 1,          -- 1=固定坐标, 2=特效位置, 3=玩家位置
+    meResourcePath = "",
+    meResourceType = 0,
+    meResourceDirX = 0,
+    meResourceDirY = 0,
+    meResourceDirZ = 0,
     meGeneratedCode = "",
 
     -- 当前标签页
-    activeTab = 1,
+    activeTab = TABS.BUILDER,
 
     -- Phase 1: 机制类型
     mechanicType = 1,       -- 1=未指定, 2=危险, 3=安全, 4=分摊, 5=凝视, 6=击退, 7=信息
@@ -475,6 +551,199 @@ local function SyncPlayerPos()
     end
 end
 
+local function CopyCoordHeadingState(dst, src)
+    dst.heading = src.heading
+    dst.headingSource = src.headingSource
+    dst.quickDirOffset = src.quickDirOffset
+    dst.headingTargetX = src.headingTargetX
+    dst.headingTargetY = src.headingTargetY
+    dst.headingTargetZ = src.headingTargetZ
+    return dst
+end
+
+local function NormalizeTargetSelectorState(schemaVersion)
+    if schemaVersion and schemaVersion >= 3 then
+        State.entityResolveMode = State.entityResolveMode or 1
+        State.targetResolveMode = State.targetResolveMode or 1
+        return
+    end
+
+    State.entityResolveMode = State.useSelfAsEntity and 1 or 2
+    if State.useCurrentTarget then
+        State.targetResolveMode = 2
+    elseif (State.targetID or 0) ~= 0 then
+        State.targetResolveMode = 3
+    else
+        State.targetResolveMode = 1
+    end
+end
+
+local function SyncLegacyTargetSelectorFlags()
+    State.useSelfAsEntity = (State.entityResolveMode == 1)
+    State.useCurrentTarget = (State.targetResolveMode == 2)
+end
+
+local function GetSelectorSpec(S, kind)
+    if kind == "entity" then
+        local mode = S.entityResolveMode or (S.useSelfAsEntity and 1 or 2)
+        local selector = ({ "self", "contentid", "name", "filter" })[mode] or "self"
+        return {
+            selector = selector,
+            contentID = S.entityID,
+            name = S.entityName,
+            filter = S.entityFilter,
+            requireVisible = S.entityRequireVisible,
+            requireTargetable = S.entityRequireTargetable,
+        }
+    end
+
+    local mode = S.targetResolveMode or (S.useCurrentTarget and 2 or ((S.targetID or 0) ~= 0 and 3 or 1))
+    local selector = ({ "none", "current-target", "contentid", "name", "filter" })[mode] or "none"
+    return {
+        selector = selector,
+        contentID = S.targetID,
+        name = S.targetName,
+        filter = S.targetFilter,
+        requireVisible = S.targetRequireVisible,
+        requireTargetable = S.targetRequireTargetable,
+    }
+end
+
+local function DescribeSelectorSpec(spec)
+    if spec.selector == "self" then
+        return "自身"
+    elseif spec.selector == "current-target" then
+        return "当前目标"
+    elseif spec.selector == "contentid" then
+        return "ContentID=" .. tostring(spec.contentID or 0)
+    elseif spec.selector == "name" then
+        return "名称=" .. tostring(spec.name or "")
+    elseif spec.selector == "filter" then
+        return "过滤串=" .. tostring(spec.filter or "")
+    end
+    return "无目标"
+end
+
+local function EntityMatchesSelectorFilters(ent, spec)
+    if not ent then return false end
+    if spec.requireVisible and Argus and Argus.isEntityVisible and not Argus.isEntityVisible(ent) then
+        return false
+    end
+    if spec.requireTargetable and not ent.targetable then
+        return false
+    end
+    return true
+end
+
+local function ResolveSelectorEntities(spec)
+    local results = {}
+
+    local function push(ent)
+        if EntityMatchesSelectorFilters(ent, spec) then
+            table.insert(results, ent)
+        end
+    end
+
+    local function pushEntityList(raw)
+        if not raw then return end
+        for _, ent in pairs(raw) do
+            push(ent)
+        end
+    end
+
+    if spec.selector == "none" then
+        return results
+    elseif spec.selector == "self" then
+        push(Player)
+    elseif spec.selector == "current-target" then
+        local tgt = Player and Player.GetTarget and Player:GetTarget()
+        push(tgt)
+    elseif spec.selector == "contentid" then
+        if (spec.contentID or 0) ~= 0 then
+            if TensorCore and TensorCore.getEntityGroupList then
+                pushEntityList(TensorCore.getEntityGroupList("ContentID", { contentid = spec.contentID }))
+            else
+                local el = EntityList("contentid=" .. tostring(spec.contentID))
+                if el and TensorCore and TensorCore.mGetEntity then
+                    for id, _ in pairs(el) do
+                        push(TensorCore.mGetEntity(id))
+                    end
+                end
+            end
+        end
+    elseif spec.selector == "name" then
+        if spec.name and spec.name ~= "" and TensorCore and TensorCore.getEntityByGroup then
+            local named = TensorCore.getEntityByGroup("Named Target", { name = spec.name, subgroup = "Number" })
+            if named and named.id then
+                push(named)
+            else
+                pushEntityList(named)
+            end
+        end
+    elseif spec.selector == "filter" then
+        if spec.filter and spec.filter ~= "" then
+            if TensorCore and TensorCore.entityList then
+                pushEntityList(TensorCore.entityList(spec.filter))
+            else
+                local el = EntityList(spec.filter)
+                if el and TensorCore and TensorCore.mGetEntity then
+                    for id, _ in pairs(el) do
+                        push(TensorCore.mGetEntity(id))
+                    end
+                end
+            end
+        end
+    end
+
+    return results
+end
+
+local function BuildSelectorCodeCondition(spec, entVar)
+    local conditions = { entVar }
+    if spec.requireVisible then
+        table.insert(conditions, "Argus.isEntityVisible(" .. entVar .. ")")
+    end
+    if spec.requireTargetable then
+        table.insert(conditions, entVar .. ".targetable")
+    end
+    return table.concat(conditions, " and ")
+end
+
+local function AppendSelectorEntityListCode(lines, indent, listVar, spec)
+    table.insert(lines, indent .. "local " .. listVar .. " = {}")
+    local cond = BuildSelectorCodeCondition(spec, "_ent")
+
+    if spec.selector == "none" then
+        return listVar
+    elseif spec.selector == "self" then
+        table.insert(lines, indent .. "do")
+        table.insert(lines, indent .. "    local _ent = Player")
+        table.insert(lines, indent .. "    if " .. cond .. " then table.insert(" .. listVar .. ", _ent) end")
+        table.insert(lines, indent .. "end")
+    elseif spec.selector == "current-target" then
+        table.insert(lines, indent .. "do")
+        table.insert(lines, indent .. "    local _ent = Player:GetTarget()")
+        table.insert(lines, indent .. "    if " .. cond .. " then table.insert(" .. listVar .. ", _ent) end")
+        table.insert(lines, indent .. "end")
+    elseif spec.selector == "contentid" then
+        table.insert(lines, indent .. string.format("for _, _ent in pairs(TensorCore.getEntityGroupList(\"ContentID\", { contentid = %s }) or {}) do", FormatNum(spec.contentID or 0)))
+        table.insert(lines, indent .. "    if " .. cond .. " then table.insert(" .. listVar .. ", _ent) end")
+        table.insert(lines, indent .. "end")
+    elseif spec.selector == "name" then
+        table.insert(lines, indent .. "local _named = TensorCore.getEntityByGroup(\"Named Target\", { name = " .. string.format("%q", spec.name or "") .. ", subgroup = \"Number\" }) or {}")
+        table.insert(lines, indent .. "if _named and _named.id then _named = { _named } end")
+        table.insert(lines, indent .. "for _, _ent in pairs(_named) do")
+        table.insert(lines, indent .. "    if " .. cond .. " then table.insert(" .. listVar .. ", _ent) end")
+        table.insert(lines, indent .. "end")
+    elseif spec.selector == "filter" then
+        table.insert(lines, indent .. "for _, _ent in pairs(TensorCore.entityList(" .. string.format("%q", spec.filter or "") .. ") or {}) do")
+        table.insert(lines, indent .. "    if " .. cond .. " then table.insert(" .. listVar .. ", _ent) end")
+        table.insert(lines, indent .. "end")
+    end
+
+    return listVar
+end
+
 local function FormatColor(r, g, b, a)
     return string.format("GUI:ColorConvertFloat4ToU32(%.2f, %.2f, %.2f, %.2f)", r, g, b, a)
 end
@@ -484,6 +753,28 @@ local function FormatNum(n)
         return tostring(math.floor(n))
     end
     return string.format("%.2f", n)
+end
+
+--- 向 lines 表追加 drawer 创建代码（Combo / MapEffect 通用）
+local function AppendDrawerCreation(lines, comment)
+    if State.useMoogleDrawer then
+        table.insert(lines, "local drawer = TensorCore.getMoogleDrawer()")
+    else
+        if comment then table.insert(lines, comment) end
+        if State.useGradient then
+            table.insert(lines, string.format("local drawer = Argus2.ShapeDrawer:new(%s, %s, %s, %s, %s)",
+                FormatColor(State.startR, State.startG, State.startB, State.startA),
+                FormatColor(State.midR, State.midG, State.midB, State.midA),
+                FormatColor(State.endR, State.endG, State.endB, State.endA),
+                FormatColor(State.outlineR, State.outlineG, State.outlineB, State.outlineA),
+                FormatNum(State.outlineThickness)))
+        else
+            table.insert(lines, string.format("local drawer = Argus2.ShapeDrawer:new(nil, nil, %s, %s, %s)",
+                FormatColor(State.fillR, State.fillG, State.fillB, State.fillA),
+                FormatColor(State.outlineR, State.outlineG, State.outlineB, State.outlineA),
+                FormatNum(State.outlineThickness)))
+        end
+    end
 end
 
 local OnEntOptionalFields = {
@@ -541,6 +832,95 @@ local function ResolveOnEntHeadingPreview(S)
     end
 end
 
+local function BuildHeadingOffsetExpr(offset)
+    if (offset or 0) ~= 0 then
+        return string.format(" + math.rad(%s)", FormatNum(offset))
+    end
+    return ""
+end
+
+local function BuildLookAtHeadingExpr(targetXExpr, targetZExpr, originXExpr, originZExpr, offsetStr)
+    return string.format(
+        "math.atan2((%s) - (%s), (%s) - (%s))%s",
+        targetXExpr,
+        originXExpr,
+        targetZExpr,
+        originZExpr,
+        offsetStr
+    )
+end
+
+local function ResolveLookAtHeadingPreview(targetX, targetZ, originX, originZ, offsetRad)
+    return math.atan2((targetX or 0) - (originX or 0), (targetZ or 0) - (originZ or 0)) + offsetRad
+end
+
+-- 坐标模式与 MapEffect 共用的朝向解析，避免预览/代码生成分叉。
+local function AppendCoordHeadingCode(lines, indent, S, opts)
+    opts = opts or {}
+    local source = S.headingSource or opts.defaultSource or 1
+    local headingVar = opts.headingVar or "heading"
+    local posXVar = opts.posXVar or FormatNum(S.posX or 0)
+    local posZVar = opts.posZVar or FormatNum(S.posZ or 0)
+
+    if opts.resourceVar and source == 2 then
+        local offsetStr = BuildHeadingOffsetExpr(S.quickDirOffset or 0)
+        table.insert(lines, indent .. "local dx, dy, dz = Argus.getEffectResourceOrientation(" .. opts.resourceVar .. ")")
+        table.insert(lines, indent .. "local " .. headingVar .. " = math.atan2(dx, dz)" .. offsetStr .. "  -- 从资源方向推导朝向")
+        return headingVar
+    end
+
+    local offsetStr = BuildHeadingOffsetExpr(S.quickDirOffset or 0)
+    if source == 1 then
+        table.insert(lines, indent .. "local " .. headingVar .. " = Player.pos.h" .. offsetStr)
+    elseif source == 3 then
+        table.insert(lines, indent .. "local _tgt = Player:GetTarget()")
+        table.insert(lines, indent .. "local " .. headingVar .. " = _tgt and (_tgt.pos.h" .. offsetStr .. ") or 0")
+    elseif source == 5 then
+        local expr = BuildLookAtHeadingExpr(
+            FormatNum(S.headingTargetX or 0),
+            FormatNum(S.headingTargetZ or 0),
+            posXVar,
+            posZVar,
+            offsetStr
+        )
+        table.insert(lines, indent .. "local " .. headingVar .. " = " .. expr)
+    elseif source == 6 then
+        local expr = BuildLookAtHeadingExpr("Player.pos.x", "Player.pos.z", posXVar, posZVar, offsetStr)
+        table.insert(lines, indent .. "local " .. headingVar .. " = " .. expr)
+    else
+        -- 固定角度，或坐标模式下无法直接解析的实体朝向回退。
+        table.insert(lines, indent .. string.format("local %s = math.rad(%s)", headingVar, FormatNum(S.heading or 0)))
+    end
+
+    return headingVar
+end
+
+local function ResolveCoordHeadingPreview(S, pos, fallbackSource)
+    local source = S.headingSource or fallbackSource or 1
+    local offsetRad = math.rad(S.quickDirOffset or 0)
+    local originX = (pos and pos.x) or S.posX or 0
+    local originZ = (pos and pos.z) or S.posZ or 0
+
+    if source == 1 then
+        return (Player and Player.pos and Player.pos.h or 0) + offsetRad
+    elseif source == 3 then
+        local tgt = Player and Player.GetTarget and Player:GetTarget()
+        return (tgt and tgt.pos and tgt.pos.h or 0) + offsetRad
+    elseif source == 5 then
+        return ResolveLookAtHeadingPreview(S.headingTargetX, S.headingTargetZ, originX, originZ, offsetRad)
+    elseif source == 6 then
+        return ResolveLookAtHeadingPreview(
+            Player and Player.pos and Player.pos.x or 0,
+            Player and Player.pos and Player.pos.z or 0,
+            originX,
+            originZ,
+            offsetRad
+        )
+    end
+
+    return math.rad(S.heading or 0)
+end
+
 local function BuildOnEntOptionalTail(sid, S, hoStr, absStr)
     local fields = OnEntOptionalFields[sid]
     if not fields then return "" end
@@ -588,8 +968,12 @@ local ExportableFields = {
     "endR", "endG", "endB", "endA",
     "gradientIntensity", "gradientMinOpacity",
     "apiLevel", "timingMode", "attachMode", "headingSource", "quickDirOffset",
-    "entityID", "useSelfAsEntity", "renderAllEntities",
-    "useCurrentTarget", "targetID",
+    "headingTargetX", "headingTargetY", "headingTargetZ",
+    "entityResolveMode", "entityID", "entityName", "entityFilter",
+    "entityRequireVisible", "entityRequireTargetable",
+    "useSelfAsEntity", "renderAllEntities",
+    "targetResolveMode", "useCurrentTarget", "targetID", "targetName", "targetFilter",
+    "targetRequireVisible", "targetRequireTargetable",
     "followPlayerPos", "usePlayerPos", "renderOnTop", "doNotDetect",
     "headingOffset", "offsetIsAbsolute",
     "mechanicType",
@@ -613,9 +997,12 @@ local function SerializeValue(v)
     return "nil"
 end
 
-local function ExportState()
-    local parts = { "ARGUS{" }
-    for _, key in ipairs(ExportableFields) do
+local ARGUS_EXPORT_SCHEMA_VERSION = 3
+local ARGUS_STYLE_SCHEMA_VERSION = 1
+
+local function ExportFieldSet(prefix, fields, schemaVersion)
+    local parts = { prefix .. "{", "__schemaVersion=" .. tostring(schemaVersion) .. "," }
+    for _, key in ipairs(fields) do
         local v = State[key]
         if v ~= nil then
             table.insert(parts, key .. "=" .. SerializeValue(v) .. ",")
@@ -625,30 +1012,49 @@ local function ExportState()
     return table.concat(parts, "")
 end
 
-local function ImportState(text)
+local function ImportFieldSet(text, prefix, fields)
     if not text or text == "" then return false, "空文本" end
-    -- 验证格式: ARGUS{...}
-    local body = string.match(text, "^ARGUS(%b{})")
-    if not body then return false, "格式错误 (需要 ARGUS{...})" end
-    -- 安全解析: 只允许基本字面值
+    local body = string.match(text, "^" .. prefix .. "(%b{})")
+    if not body then return false, "格式错误 (需要 " .. prefix .. "{...})" end
+
     local fn, err = loadstring("return " .. body)
     if not fn then return false, "解析失败: " .. tostring(err) end
-    -- 沙箱执行
-    setfenv(fn, {})
+    if setfenv then setfenv(fn, {}) end
+
     local ok, data = pcall(fn)
     if not ok or type(data) ~= "table" then return false, "执行失败" end
-    -- 白名单导入
+
     local allowed = {}
-    for _, key in ipairs(ExportableFields) do allowed[key] = true end
+    for _, key in ipairs(fields) do allowed[key] = true end
+
     local count = 0
     for k, v in pairs(data) do
-        if allowed[k] and type(v) == type(State[k]) then
+        if k ~= "__schemaVersion" and allowed[k] and type(v) == type(State[k]) then
             State[k] = v
             count = count + 1
         end
     end
+
+    return true, count, tonumber(data.__schemaVersion) or 1
+end
+
+local function ExportState()
+    SyncLegacyTargetSelectorFlags()
+    return ExportFieldSet("ARGUS", ExportableFields, ARGUS_EXPORT_SCHEMA_VERSION)
+end
+
+local function ImportState(text)
+    local ok, count, schemaVersion = ImportFieldSet(text, "ARGUS", ExportableFields)
+    if not ok then return false, count end
     State.generatedCode = ""
-    return true, count .. " 个字段已导入"
+    NormalizeTargetSelectorState(schemaVersion)
+    SyncLegacyTargetSelectorFlags()
+
+    local msg = string.format("%d 个字段已导入 (v%d)", count, schemaVersion)
+    if schemaVersion > ARGUS_EXPORT_SCHEMA_VERSION then
+        msg = msg .. "，包含更新版本字段，已按白名单忽略未知项"
+    end
+    return true, msg
 end
 
 --- 样式剪贴板 (仅颜色+drawer相关字段)
@@ -661,6 +1067,17 @@ local StyleFields = {
     "endR", "endG", "endB", "endA",
     "gradientIntensity", "gradientMinOpacity",
 }
+
+local function ExportStyle()
+    return ExportFieldSet("ARGUSSTYLE", StyleFields, ARGUS_STYLE_SCHEMA_VERSION)
+end
+
+local function ImportStyle(text)
+    local ok, count, schemaVersion = ImportFieldSet(text, "ARGUSSTYLE", StyleFields)
+    if not ok then return false, count end
+    State.generatedCode = ""
+    return true, string.format("%d 个样式字段已导入 (v%d)", count, schemaVersion)
+end
 
 local function CopyStyle()
     local clip = {}
@@ -832,17 +1249,7 @@ local function GenerateCode()
     -- 朝向
     local needsHeading = ShapeNeedsHeading(sid)
     if needsHeading and not isOnEnt then
-        local offsetStr = State.quickDirOffset ~= 0
-            and string.format(" + math.rad(%s)", FormatNum(State.quickDirOffset)) or ""
-        if State.headingSource == 1 then
-            table.insert(lines, "local heading = Player.pos.h" .. offsetStr)
-        elseif State.headingSource == 3 then
-            table.insert(lines, "local _tgt = Player:GetTarget()")
-            table.insert(lines, "local heading = _tgt and (_tgt.pos.h" .. offsetStr .. ") or 0")
-        else
-            -- 固定角度（headingSource==4 或坐标模式下的实体朝向回退）
-            table.insert(lines, string.format("local heading = math.rad(%s)", FormatNum(State.heading)))
-        end
+        AppendCoordHeadingCode(lines, "", State, { posXVar = "x", posZVar = "z" })
         table.insert(lines, "")
     end
 
@@ -902,47 +1309,31 @@ local function GenerateCode()
             if isOnEnt then
                 -- addTimedXxxOnEnt
                 local methodName = "addTimed" .. sid .. "OnEnt"
-                -- 判断是否渲染全部相同 ContentID 实体
-                local renderAll = State.renderAllEntities and not State.useSelfAsEntity
+                local entitySpec = GetSelectorSpec(State, "entity")
+                local targetSpec = GetSelectorSpec(State, "target")
+                local renderAll = State.renderAllEntities and entitySpec.selector ~= "self"
 
                 if renderAll then
-                    table.insert(lines, "-- 附着实体绘图 (渲染全部相同 ContentID 实体)")
+                    table.insert(lines, "-- 附着实体绘图 (渲染全部匹配实体)")
                 else
-                    table.insert(lines, "-- 附着实体绘图")
+                    table.insert(lines, "-- 附着实体绘图: " .. DescribeSelectorSpec(entitySpec))
                 end
 
-                local entStr
-                if State.useSelfAsEntity then
-                    entStr = "Player.id"
-                elseif renderAll then
-                    -- 遍历全部实体，不 break
-                    table.insert(lines, string.format("local _el = EntityList(\"contentid=%s\")", FormatNum(State.entityID)))
-                    table.insert(lines, "if not _el then return end")
-                    table.insert(lines, "")
-                    entStr = "entID"
-                else
-                    -- 只取第一个实体
-                    table.insert(lines, string.format("local _el = EntityList(\"contentid=%s\")", FormatNum(State.entityID)))
-                    table.insert(lines, "local entID; if _el then for id, _ in pairs(_el) do entID = id; break end end")
-                    table.insert(lines, "if not entID then return end")
-                    table.insert(lines, "")
-                    entStr = "entID"
-                end
+                AppendSelectorEntityListCode(lines, "", "_entMatches", entitySpec)
+                table.insert(lines, "if #_entMatches == 0 then return end")
+                table.insert(lines, "")
 
-                local tgtStr
-                if State.useCurrentTarget then
-                    tgtStr = "Player.targetid"
-                elseif State.targetID ~= 0 then
-                    table.insert(lines, string.format("local _tEl = EntityList(\"contentid=%s\")", FormatNum(State.targetID)))
-                    table.insert(lines, "local tgtID; if _tEl then for id, _ in pairs(_tEl) do tgtID = id; break end end")
+                local tgtStr = "0"
+                if targetSpec.selector ~= "none" then
+                    AppendSelectorEntityListCode(lines, "", "_tgtMatches", targetSpec)
+                    table.insert(lines, "local tgtID = _tgtMatches[1] and _tgtMatches[1].id or 0")
                     table.insert(lines, "")
-                    tgtStr = "tgtID or 0"
-                else
-                    tgtStr = "0"
+                    tgtStr = "tgtID"
                 end
 
                 -- 缩进前缀：renderAll 模式下绘图调用在 for 循环内
                 local ii = renderAll and "    " or ""
+                local entStr = "entID"
 
                 local args = FormatNum(State.timeout) .. ", " .. entStr .. ", " ..
                     BuildArgs(ShapeParams[sid].ent, State, FormatNum, tgtStr, { useHitbox = useHitbox })
@@ -959,10 +1350,13 @@ local function GenerateCode()
 
                 -- 生成绘图调用
                 if renderAll then
-                    table.insert(lines, "for entID, _ in pairs(_el) do")
+                    table.insert(lines, "for _, _selectedEnt in ipairs(_entMatches) do")
+                    table.insert(lines, ii .. "local entID = _selectedEnt.id")
                     table.insert(lines, ii .. "drawer:" .. methodName .. "(" .. args .. ")")
                     table.insert(lines, "end")
                 else
+                    table.insert(lines, "local entID = _entMatches[1] and _entMatches[1].id or nil")
+                    table.insert(lines, "if not entID then return end")
                     table.insert(lines, "local uuid = drawer:" .. methodName .. "(" .. args .. ")")
                 end
             else
@@ -1135,42 +1529,37 @@ local function ExecutePreview()
     local x, y, z = State.posX, State.posY, State.posZ
     local timeout = State.timeout
     local del = State.delay
-    local headingRad = math.rad(State.heading)
+    local headingRad = ShapeNeedsHeading(sid)
+        and ResolveCoordHeadingPreview(State, { x = x, y = y, z = z }) or 0
     local angleRad = math.rad(State.angle)
 
     local isOnEnt = (State.attachMode == 2)
     local uuid
 
     if isOnEnt then
+        local entitySpec = GetSelectorSpec(State, "entity")
+        local targetSpec = GetSelectorSpec(State, "target")
+
         -- 收集实体 ID 列表
         local entIDs = {}
-        if State.useSelfAsEntity then
-            table.insert(entIDs, Player.id)
-        else
-            local el = EntityList("contentid=" .. tostring(State.entityID))
-            if el then
-                if State.renderAllEntities then
-                    for id, _ in pairs(el) do table.insert(entIDs, id) end
-                else
-                    for id, _ in pairs(el) do table.insert(entIDs, id); break end
-                end
+        local entMatches = ResolveSelectorEntities(entitySpec)
+        if State.renderAllEntities and entitySpec.selector ~= "self" then
+            for _, ent in ipairs(entMatches) do
+                table.insert(entIDs, ent.id)
             end
-            if #entIDs == 0 then
-                State.lastLog = "错误: 未找到 ContentID=" .. tostring(State.entityID) .. " 的实体"
-                d("[ArgusBuilder] 错误: 未找到 ContentID=" .. tostring(State.entityID))
-                return
-            end
+        elseif entMatches[1] and entMatches[1].id then
+            table.insert(entIDs, entMatches[1].id)
         end
+
+        if #entIDs == 0 then
+            State.lastLog = "错误: 未找到匹配实体 - " .. DescribeSelectorSpec(entitySpec)
+            d("[ArgusBuilder] 错误: 未找到匹配实体 - " .. DescribeSelectorSpec(entitySpec))
+            return
+        end
+
         local tgtID
-        if State.useCurrentTarget then
-            tgtID = Player.targetid or 0
-        elseif State.targetID ~= 0 then
-            local tEl = EntityList("contentid=" .. tostring(State.targetID))
-            if tEl then for id, _ in pairs(tEl) do tgtID = id; break end end
-            tgtID = tgtID or 0
-        else
-            tgtID = 0
-        end
+        local tgtMatches = ResolveSelectorEntities(targetSpec)
+        tgtID = tgtMatches[1] and tgtMatches[1].id or 0
 
         -- 计算 headingOffset / offsetIsAbsolute (预览用)
         local ho, hoAbs
@@ -1255,11 +1644,6 @@ local function DrawPresetButtons(rKey, gKey, bKey, aKey)
             State[aKey] = preset.a
         end
         GUI:PopStyleColor(3)
-
-        -- 每行5个换行
-        if i == 5 then
-            -- 下一行会自动换行
-        end
     end
 end
 
@@ -1302,7 +1686,7 @@ local function SnapshotCurrentStep(stepDelay)
         pos2Y       = State.pos2Y,
         pos2Z       = State.pos2Z,
     }
-    return step
+    return CopyCoordHeadingState(step, State)
 end
 
 -- =============================================
@@ -1312,12 +1696,17 @@ local function SnapshotMEStep()
     local shape = GetCurrentShape()
     if not shape then return nil end
     SyncPlayerPos()
-    return {
+    local step = {
         a1 = State.meA1,
         a3 = State.meA3,
         checkA3 = State.meCheckA3,
         label = State.meLabel,
         posMode = State.mePosMode,
+        resourcePath = State.meResourcePath,
+        resourceType = State.meResourceType,
+        resourceDirX = State.meResourceDirX,
+        resourceDirY = State.meResourceDirY,
+        resourceDirZ = State.meResourceDirZ,
         shapeIndex = State.shapeIndex,
         shapeName  = shape.name,
         shapeId    = shape.id,
@@ -1329,9 +1718,6 @@ local function SnapshotMEStep()
         length      = State.length,
         width       = State.width,
         angle       = State.angle,
-        heading     = State.heading,
-        headingSource = State.headingSource,
-        quickDirOffset = State.quickDirOffset,
         thickness   = State.thickness,
         baseLength  = State.baseLength,
         baseWidth   = State.baseWidth,
@@ -1344,6 +1730,7 @@ local function SnapshotMEStep()
         pos2Y = State.pos2Y,
         pos2Z = State.pos2Z,
     }
+    return CopyCoordHeadingState(step, State)
 end
 
 -- =============================================
@@ -1374,37 +1761,11 @@ local function GenerateComboCode()
         table.insert(lines, string.format("local x, y, z = %s, %s, %s",
             FormatNum(State.posX), FormatNum(State.posY), FormatNum(State.posZ)))
     end
-    local offsetStr = State.quickDirOffset ~= 0
-        and string.format(" + math.rad(%s)", FormatNum(State.quickDirOffset)) or ""
-    if State.headingSource == 1 then
-        table.insert(lines, "local heading = Player.pos.h" .. offsetStr)
-    elseif State.headingSource == 3 then
-        table.insert(lines, "local _tgt = Player:GetTarget()")
-        table.insert(lines, "local heading = _tgt and (_tgt.pos.h" .. offsetStr .. ") or 0")
-    else
-        table.insert(lines, string.format("local heading = math.rad(%s)", FormatNum(State.heading)))
-    end
+    AppendCoordHeadingCode(lines, "", State, { posXVar = "x", posZVar = "z" })
     table.insert(lines, string.format("local timeout = %s", FormatNum(State.timeout)))
     table.insert(lines, "")
 
-    if State.useMoogleDrawer then
-        table.insert(lines, "local drawer = TensorCore.getMoogleDrawer()")
-    else
-        table.insert(lines, "-- 创建绘图器 (请根据需要调整颜色)")
-        if State.useGradient then
-            table.insert(lines, string.format("local drawer = Argus2.ShapeDrawer:new(%s, %s, %s, %s, %s)",
-                FormatColor(State.startR, State.startG, State.startB, State.startA),
-                FormatColor(State.midR, State.midG, State.midB, State.midA),
-                FormatColor(State.endR, State.endG, State.endB, State.endA),
-                FormatColor(State.outlineR, State.outlineG, State.outlineB, State.outlineA),
-                FormatNum(State.outlineThickness)))
-        else
-            table.insert(lines, string.format("local drawer = Argus2.ShapeDrawer:new(nil, nil, %s, %s, %s)",
-                FormatColor(State.fillR, State.fillG, State.fillB, State.fillA),
-                FormatColor(State.outlineR, State.outlineG, State.outlineB, State.outlineA),
-                FormatNum(State.outlineThickness)))
-        end
-    end
+    AppendDrawerCreation(lines, "-- 创建绘图器 (请根据需要调整颜色)")
     table.insert(lines, "")
 
     if mode == 1 then
@@ -1430,13 +1791,22 @@ local function GenerateComboCode()
             tipLength   = State.tipLength,
             tipWidth    = State.tipWidth,
         }
+        CopyCoordHeadingState(step, State)
 
         table.insert(lines, string.format("-- 循环前进 (地火): %s × %d  步进 %s米  间隔 %sms",
             loopShape.name, State.loopCount, FormatNum(State.loopStepDist), FormatNum(State.loopInterval)))
         table.insert(lines, string.format("for i = 0, %d do", State.loopCount - 1))
         table.insert(lines, string.format("    local pos = TensorCore.getPosInDirection({x=x, y=y, z=z}, heading, i * %s)",
             FormatNum(State.loopStepDist)))
-        local call = GenerateShapeCall(step, "pos.x, pos.y, pos.z", "heading", 0)
+        local loopHeadingVar = ShapeNeedsHeading(step.shapeId) and "heading" or "0"
+        if ShapeNeedsHeading(step.shapeId) then
+            loopHeadingVar = AppendCoordHeadingCode(lines, "    ", step, {
+                posXVar = "pos.x",
+                posZVar = "pos.z",
+                headingVar = "stepHeading",
+            })
+        end
+        local call = GenerateShapeCall(step, "pos.x, pos.y, pos.z", loopHeadingVar, 0)
         -- 替换 delay 0 为 i * interval
         call = string.gsub(call, ", 0%)$", string.format(", i * %s)", FormatNum(State.loopInterval)))
         table.insert(lines, "    " .. call)
@@ -1451,10 +1821,14 @@ local function GenerateComboCode()
             for i, step in ipairs(State.comboSteps) do
                 table.insert(lines, "")
                 table.insert(lines, string.format("-- 步骤 %d: %s (延迟 %dms)", i, step.shapeName, step.delay))
-                local headVar = "heading"
-                -- 如果步骤有独立朝向且不同于主朝向，使用步骤朝向
-                if step.heading ~= State.heading then
-                    headVar = string.format("math.rad(%s)", FormatNum(step.heading))
+                local headVar = ShapeNeedsHeading(step.shapeId) and "heading" or "0"
+                if ShapeNeedsHeading(step.shapeId) then
+                    headVar = AppendCoordHeadingCode(lines, "", step, {
+                        posXVar = "x",
+                        posZVar = "z",
+                        headingVar = "stepHeading" .. tostring(i),
+                        defaultSource = 4,
+                    })
                 end
                 local call = GenerateShapeCall(step, "x, y, z", headVar, step.delay)
                 table.insert(lines, call)
@@ -1470,9 +1844,14 @@ local function GenerateComboCode()
             for i, step in ipairs(State.comboSteps) do
                 table.insert(lines, "")
                 table.insert(lines, string.format("-- 步骤 %d: %s", i, step.shapeName))
-                local headVar = "heading"
-                if step.heading ~= State.heading then
-                    headVar = string.format("math.rad(%s)", FormatNum(step.heading))
+                local headVar = ShapeNeedsHeading(step.shapeId) and "heading" or "0"
+                if ShapeNeedsHeading(step.shapeId) then
+                    headVar = AppendCoordHeadingCode(lines, "", step, {
+                        posXVar = "x",
+                        posZVar = "z",
+                        headingVar = "stepHeading" .. tostring(i),
+                        defaultSource = 4,
+                    })
                 end
                 local call = GenerateShapeCall(step, "x, y, z", headVar, 0)
                 table.insert(lines, call)
@@ -1507,21 +1886,7 @@ local function GenerateMapEffectCode()
     table.insert(lines, "")
 
     -- Drawer
-    if State.useMoogleDrawer then
-        table.insert(lines, "local drawer = TensorCore.getMoogleDrawer()")
-    elseif State.useGradient then
-        table.insert(lines, string.format("local drawer = Argus2.ShapeDrawer:new(%s, %s, %s, %s, %s)",
-            FormatColor(State.startR, State.startG, State.startB, State.startA),
-            FormatColor(State.midR, State.midG, State.midB, State.midA),
-            FormatColor(State.endR, State.endG, State.endB, State.endA),
-            FormatColor(State.outlineR, State.outlineG, State.outlineB, State.outlineA),
-            FormatNum(State.outlineThickness)))
-    else
-        table.insert(lines, string.format("local drawer = Argus2.ShapeDrawer:new(nil, nil, %s, %s, %s)",
-            FormatColor(State.fillR, State.fillG, State.fillB, State.fillA),
-            FormatColor(State.outlineR, State.outlineG, State.outlineB, State.outlineA),
-            FormatNum(State.outlineThickness)))
-    end
+    AppendDrawerCreation(lines)
     table.insert(lines, "")
 
     local bi = ""  -- base indent
@@ -1542,52 +1907,49 @@ local function GenerateMapEffectCode()
         if entry.label and entry.label ~= "" then
             table.insert(lines, bi .. "-- " .. entry.label)
         end
+        if entry.resourcePath and entry.resourcePath ~= "" then
+            table.insert(lines, bi .. "-- 资源: " .. entry.resourcePath .. "  type=" .. tostring(entry.resourceType or 0))
+        end
         table.insert(lines, bi .. "if " .. cond .. " then")
 
         local ii = bi .. "    "  -- inner indent
 
-        -- Heading
         local needsHeading = ShapeNeedsHeading(entry.shapeId)
-        if needsHeading then
-            local oStr = (entry.quickDirOffset or 0) ~= 0
-                and string.format(" + math.rad(%s)", FormatNum(entry.quickDirOffset or 0)) or ""
-            if (entry.headingSource or 1) == 1 then
-                table.insert(lines, ii .. "local heading = Player.pos.h" .. oStr)
-            elseif (entry.headingSource or 1) == 3 then
-                table.insert(lines, ii .. "local _tgt = Player:GetTarget()")
-                table.insert(lines, ii .. "local heading = _tgt and (_tgt.pos.h" .. oStr .. ") or 0")
-            else
-                table.insert(lines, ii .. string.format("local heading = math.rad(%s)",
-                    FormatNum(entry.heading)))
-            end
-        end
-
-        table.insert(lines, ii .. string.format("local timeout = %s", FormatNum(entry.timeout or 5000)))
+        local headVar = needsHeading and "heading" or "0"
 
         -- 位置 + 绘图调用
-        local headVar = needsHeading and "heading" or "0"
         if entry.posMode == 2 then
             -- 特效资源位置（可选获取朝向）
             table.insert(lines, ii .. "local res = Argus.getMapEffectResource(a1)")
             table.insert(lines, ii .. "if res then")
             local di = ii .. "    "
             table.insert(lines, di .. "local x, y, z = Argus.getEffectResourcePosition(res)")
-            if needsHeading and (entry.headingSource or 1) == 4 then
-                -- 从特效资源的方向向量推导朝向
-                table.insert(lines, di .. "local dx, dy, dz = Argus.getEffectResourceOrientation(res)")
-                table.insert(lines, di .. "local heading = math.atan2(dx, dz)  -- 从资源方向推导朝向")
-                headVar = "heading"
+            if needsHeading then
+                headVar = AppendCoordHeadingCode(lines, di, entry, {
+                    resourceVar = "res",
+                    posXVar = "x",
+                    posZVar = "z",
+                })
             end
+            table.insert(lines, di .. string.format("local timeout = %s", FormatNum(entry.timeout or 5000)))
             table.insert(lines, di .. GenerateShapeCall(entry, "x, y, z", headVar, entry.delay or 0))
             table.insert(lines, ii .. "end")
         elseif entry.posMode == 3 then
             -- 玩家位置
             table.insert(lines, ii .. "local x, y, z = Player.pos.x, Player.pos.y, Player.pos.z")
+            if needsHeading then
+                headVar = AppendCoordHeadingCode(lines, ii, entry, { posXVar = "x", posZVar = "z" })
+            end
+            table.insert(lines, ii .. string.format("local timeout = %s", FormatNum(entry.timeout or 5000)))
             table.insert(lines, ii .. GenerateShapeCall(entry, "x, y, z", headVar, entry.delay or 0))
         else
             -- 固定坐标
             table.insert(lines, ii .. string.format("local x, y, z = %s, %s, %s",
                 FormatNum(entry.posX), FormatNum(entry.posY), FormatNum(entry.posZ)))
+            if needsHeading then
+                headVar = AppendCoordHeadingCode(lines, ii, entry, { posXVar = "x", posZVar = "z" })
+            end
+            table.insert(lines, ii .. string.format("local timeout = %s", FormatNum(entry.timeout or 5000)))
             table.insert(lines, ii .. GenerateShapeCall(entry, "x, y, z", headVar, entry.delay or 0))
         end
 
@@ -1616,7 +1978,7 @@ local function ExecuteComboPreview()
     local drawer = CreatePreviewDrawer()
 
     local x, y, z = State.posX, State.posY, State.posZ
-    local headingRad = math.rad(State.heading)
+    local headingRad = ResolveCoordHeadingPreview(State, { x = x, y = y, z = z })
     local timeout = State.timeout
     local mode = State.comboMode
 
@@ -1640,15 +2002,19 @@ local function ExecuteComboPreview()
                 baseWidth = State.baseWidth, tipLength = State.tipLength, tipWidth = State.tipWidth,
                 pos2X = State.pos2X, pos2Y = State.pos2Y, pos2Z = State.pos2Z
             }
+            CopyCoordHeadingState(step, State)
             for i = 0, State.loopCount - 1 do
                 local pos = TensorCore.getPosInDirection({x=x, y=y, z=z}, headingRad, i * State.loopStepDist)
-                previewStep(step, pos.x, pos.y, pos.z, headingRad, i * State.loopInterval)
+                local stepHeading = ShapeNeedsHeading(step.shapeId)
+                    and ResolveCoordHeadingPreview(step, { x = pos.x, y = pos.y, z = pos.z }) or 0
+                previewStep(step, pos.x, pos.y, pos.z, stepHeading, i * State.loopInterval)
             end
         end
     else
         -- 顺序 / 同时
         for _, step in ipairs(State.comboSteps) do
-            local hRad = math.rad(step.heading or State.heading)
+            local hRad = ShapeNeedsHeading(step.shapeId)
+                and ResolveCoordHeadingPreview(step, { x = x, y = y, z = z }, 4) or 0
             local del = (mode == 2) and step.delay or 0
             previewStep(step, x, y, z, hRad, del)
         end
@@ -1664,9 +2030,14 @@ end
 M.DrawArgusBuilderUI = function()
     T.PushTheme()
     GUI:SetNextWindowSize(720, 700, GUI.SetCond_Appearing)
-    M.ArgusBuilderUI.visible, M.ArgusBuilderUI.open = GUI:Begin("StringCore 工具箱###ArgusBuilderWindow", M.ArgusBuilderUI.open)
+    M.ArgusBuilderUI.visible, M.ArgusBuilderUI.open = GUI:Begin("Argus Builder###ArgusBuilderWindow", M.ArgusBuilderUI.open)
 
     if M.ArgusBuilderUI.visible then
+
+        if M.ArgusBuilderUI.requestedTab then
+            State.activeTab = M.ArgusBuilderUI.requestedTab
+            M.ArgusBuilderUI.requestedTab = nil
+        end
 
         -- 接收 MapEffectUI 传递的数据
         if M._mapEffectTransfer then
@@ -1680,6 +2051,14 @@ M.DrawArgusBuilderUI = function()
                 State.posY = M._mapEffectTransfer.posY
                 State.posZ = M._mapEffectTransfer.posZ
                 State.usePlayerPos = false
+            end
+            State.meResourcePath = M._mapEffectTransfer.resourcePath or ""
+            State.meResourceType = M._mapEffectTransfer.resourceType or 0
+            State.meResourceDirX = M._mapEffectTransfer.resourceDirX or 0
+            State.meResourceDirY = M._mapEffectTransfer.resourceDirY or 0
+            State.meResourceDirZ = M._mapEffectTransfer.resourceDirZ or 0
+            if State.meResourcePath ~= "" then
+                State.mePosMode = 2
             end
             State.lastLog = "已从 MapEffect 查看器接收: Index=" .. State.meA1
             M._mapEffectTransfer = nil
@@ -1699,11 +2078,9 @@ M.DrawArgusBuilderUI = function()
             if mt and State.mechanicType > 1 then
                 fR, fG, fB, fA = mt.fill[1], mt.fill[2], mt.fill[3], mt.fill[4]
             end
-            GUI:PushStyleColor(GUI.Col_Button, fR, fG, fB, fA)
-            GUI:PushStyleColor(GUI.Col_ButtonHovered, fR, fG, fB, fA)
-            GUI:PushStyleColor(GUI.Col_ButtonActive, fR, fG, fB, fA)
+            PushSolidColor(fR, fG, fB, fA)
             GUI:Button("  ##SumFill", 16, 16)
-            GUI:PopStyleColor(3)
+            PopSolidColor()
             GUI:SameLine(0, 6)
 
             GUI:TextColored(C.white[1], C.white[2], C.white[3], C.white[4], shapeName)
@@ -1740,16 +2117,14 @@ M.DrawArgusBuilderUI = function()
                 GUI:TextColored(C.hint[1], C.hint[2], C.hint[3], C.hint[4],
                     string.format("(%.1f, %.1f, %.1f)", State.posX, State.posY, State.posZ))
             else
-                local entStr = State.useSelfAsEntity and "Self" or ("CID=" .. FormatNum(State.entityID))
+                local entStr = DescribeSelectorSpec(GetSelectorSpec(State, "entity"))
                 GUI:TextColored(C.hint[1], C.hint[2], C.hint[3], C.hint[4], entStr)
             end
 
             GUI:SameLine(0, 10)
-            GUI:PushStyleColor(GUI.Col_Button, State.outlineR, State.outlineG, State.outlineB, State.outlineA)
-            GUI:PushStyleColor(GUI.Col_ButtonHovered, State.outlineR, State.outlineG, State.outlineB, State.outlineA)
-            GUI:PushStyleColor(GUI.Col_ButtonActive, State.outlineR, State.outlineG, State.outlineB, State.outlineA)
+            PushSolidColor(State.outlineR, State.outlineG, State.outlineB, State.outlineA)
             GUI:Button("##SumOL", 12, 12)
-            GUI:PopStyleColor(3)
+            PopSolidColor()
 
             -- 附加功能标签
             local tags = {}
@@ -1770,11 +2145,15 @@ M.DrawArgusBuilderUI = function()
 
         -- ===== 标签页按钮 =====
         do
-            local tabs = { "MapEffect", "形状/颜色", "代码", "ME触发器" }
-            local tabIcons = { "ME", "形状", "代码", "触发" }
-            for i, name in ipairs(tabs) do
+            local tabDefs = {
+                { id = TABS.BUILDER, label = "Argus Builder" },
+                { id = TABS.CODE, label = "代码" },
+                { id = TABS.MAP_EFFECT, label = "MapEffect" },
+                { id = TABS.ME_TRIGGER, label = "ME触发器" },
+            }
+            for i, tab in ipairs(tabDefs) do
                 if i > 1 then GUI:SameLine(0, 2) end
-                local isActive = (State.activeTab == i)
+                local isActive = (State.activeTab == tab.id)
                 if isActive then
                     GUI:PushStyleColor(GUI.Col_Button, 0.20, 0.45, 0.80, 0.90)
                     GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.25, 0.52, 0.88, 0.95)
@@ -1786,8 +2165,8 @@ M.DrawArgusBuilderUI = function()
                     GUI:PushStyleColor(GUI.Col_ButtonActive, 0.18, 0.18, 0.22, 1.00)
                     GUI:PushStyleColor(GUI.Col_Text, 0.6, 0.6, 0.6, 1.0)
                 end
-                if GUI:Button(name .. "##ABTab" .. i, 0, 26) then
-                    State.activeTab = i
+                if GUI:Button(tab.label .. "##ABTab" .. tab.id, 0, 26) then
+                    State.activeTab = tab.id
                 end
                 GUI:PopStyleColor(4)
             end
@@ -1798,24 +2177,8 @@ M.DrawArgusBuilderUI = function()
         -- MapEffect 自动刷新
         if M.MapEffectAutoRefresh then M.MapEffectAutoRefresh() end
 
-        -- Tab 1: MapEffect (特效列表 + 执行控制)
-        if State.activeTab == 1 then
-            if M.DrawEffectListTab then
-                M.DrawEffectListTab()
-            end
-            GUI:Spacing()
-            GUI:Separator()
-            GUI:Spacing()
-            if M.DrawExecControlTab then
-                M.DrawExecControlTab()
-            end
-
-
-
-
-        -- Tab 2: 形状/颜色
-        elseif State.activeTab == 2 then
-
+        -- Tab: Argus Builder
+        if State.activeTab == TABS.BUILDER then
         -- =============================================
         -- 形状选择器
         -- =============================================
@@ -1852,9 +2215,7 @@ M.DrawArgusBuilderUI = function()
         GUI:PushItemWidth(160)
         local newMT = GUI:Combo("机制类型##ArgusMT", State.mechanicType, MechanicTypeNames)
         GUI:PopItemWidth()
-        if GUI:IsItemHovered() then
-            GUI:SetTooltip("选择机制语义类型，自动应用对应的填充和描边颜色\n危险=红 安全=绿 分摊=橙 凝视=紫 击退=青 信息=蓝")
-        end
+        ItemTooltip("选择机制语义类型，自动应用对应的填充和描边颜色\n危险=红 安全=绿 分摊=橙 凝视=紫 击退=青 信息=蓝")
         if newMT ~= State.mechanicType then
             ApplyMechanicColor(newMT)
         end
@@ -1863,11 +2224,9 @@ M.DrawArgusBuilderUI = function()
             local mt = MechanicTypes[State.mechanicType]
             if mt then
                 GUI:SameLine(0, 8)
-                GUI:PushStyleColor(GUI.Col_Button, mt.fill[1], mt.fill[2], mt.fill[3], mt.fill[4])
-                GUI:PushStyleColor(GUI.Col_ButtonHovered, mt.fill[1], mt.fill[2], mt.fill[3], mt.fill[4])
-                GUI:PushStyleColor(GUI.Col_ButtonActive, mt.fill[1], mt.fill[2], mt.fill[3], mt.fill[4])
+                PushSolidColor(mt.fill[1], mt.fill[2], mt.fill[3], mt.fill[4])
                 GUI:Button("  ##MTPreview", 20, 20)
-                GUI:PopStyleColor(3)
+                PopSolidColor()
                 GUI:SameLine(0, 4)
                 GUI:TextColored(mt.fill[1], mt.fill[2], mt.fill[3], 1.0, mt.name)
             end
@@ -1907,21 +2266,15 @@ M.DrawArgusBuilderUI = function()
 
         GUI:PushItemWidth(200)
         State.apiLevel = GUI:Combo("API 层级##ArgusApi", State.apiLevel, ApiLevelNames)
-        if GUI:IsItemHovered() then
-            GUI:SetTooltip("Argus2: 推荐，功能最全\nShapeDrawer: 基础绘图\nStaticDrawer: 仅支持 OnFrame 瞬时绘图")
-        end
+        ItemTooltip("Argus2: 推荐，功能最全\nShapeDrawer: 基础绘图\nStaticDrawer: 仅支持 OnFrame 瞬时绘图")
         if State.apiLevel == 3 then
             T.HintText("  StaticDrawer 仅支持 OnFrame，不支持 Timed")
             State.timingMode = 2
         end
         State.timingMode = GUI:Combo("时机类型##ArgusTiming", State.timingMode, TimingModeNames)
-        if GUI:IsItemHovered() then
-            GUI:SetTooltip("Timed: 绘制持续指定毫秒后消失\nOnFrame: 每帧绘制，需放在循环中")
-        end
+        ItemTooltip("Timed: 绘制持续指定毫秒后消失\nOnFrame: 每帧绘制，需放在循环中")
         State.attachMode = GUI:Combo("附着方式##ArgusAttach", State.attachMode, AttachModeNames)
-        if GUI:IsItemHovered() then
-            GUI:SetTooltip("坐标: 在固定世界坐标绘制\nOnEnt: 跟随指定实体移动")
-        end
+        ItemTooltip("坐标: 在固定世界坐标绘制\nOnEnt: 跟随指定实体移动")
         GUI:PopItemWidth()
 
         -- OnEnt 参数
@@ -1930,30 +2283,55 @@ M.DrawArgusBuilderUI = function()
             GUI:Spacing()
             GUI:TextColored(C.section[1], C.section[2], C.section[3], C.section[4], "实体附着参数")
 
-            State.useSelfAsEntity = GUI:Checkbox("附着到自身 (Player.id)##ArgusEntSelf", State.useSelfAsEntity)
-            if GUI:IsItemHovered() then
-                GUI:SetTooltip("绘图跟随自己的角色移动")
-            end
-            if not State.useSelfAsEntity then
+            GUI:PushItemWidth(180)
+            State.entityResolveMode = GUI:Combo("附着实体来源##ArgusEntityMode", State.entityResolveMode, EntityResolveModeNames, #EntityResolveModeNames)
+            GUI:PopItemWidth()
+            if State.entityResolveMode == 2 then
                 GUI:PushItemWidth(150)
-                State.entityID = GUI:InputInt("目标 ContentID##ArgusEntID", State.entityID)
+                State.entityID = GUI:InputInt("实体 ContentID##ArgusEntID", State.entityID)
                 GUI:PopItemWidth()
-                if GUI:IsItemHovered() then
-                    GUI:SetTooltip("要附着的实体的 ContentID (可从实体列表获取)")
-                end
-
-                State.renderAllEntities = GUI:Checkbox("所有同 ID 实体都绘制##ArgusRenderAll", State.renderAllEntities)
-                if GUI:IsItemHovered() then
-                    GUI:SetTooltip("场上所有匹配此 ContentID 的实体都画图\n不勾选则只对第一个匹配的实体绘制")
-                end
+                ItemTooltip("通过 ContentID 查找附着实体")
+            elseif State.entityResolveMode == 3 then
+                State.entityName = GUI:InputText("实体名称##ArgusEntName", State.entityName)
+                ItemTooltip("通过名称查找附着实体，底层使用 Named Target")
+            elseif State.entityResolveMode == 4 then
+                State.entityFilter = GUI:InputText("实体过滤串##ArgusEntFilter", State.entityFilter)
+                ItemTooltip("直接传给 TensorCore.entityList / EntityList，例如 alive,contentid=14383")
+            else
+                T.HintText("附着到玩家自身")
             end
 
-            State.useCurrentTarget = GUI:Checkbox("朝向当前目标 (Player.targetid)##ArgusTgt", State.useCurrentTarget)
-            if not State.useCurrentTarget then
+            if State.entityResolveMode ~= 1 then
+                State.renderAllEntities = GUI:Checkbox("所有匹配实体都绘制##ArgusRenderAll", State.renderAllEntities)
+                ItemTooltip("勾选后会对所有匹配实体绘制，否则只取第一个匹配实体")
+                State.entityRequireVisible = GUI:Checkbox("仅可见实体##ArgusEntVisible", State.entityRequireVisible)
+                GUI:SameLine(0, 10)
+                State.entityRequireTargetable = GUI:Checkbox("仅可选中实体##ArgusEntTargetable", State.entityRequireTargetable)
+            end
+
+            GUI:Spacing()
+            GUI:TextColored(C.section[1], C.section[2], C.section[3], C.section[4], "目标引用参数")
+            GUI:PushItemWidth(180)
+            State.targetResolveMode = GUI:Combo("目标来源##ArgusTargetMode", State.targetResolveMode, TargetResolveModeNames, #TargetResolveModeNames)
+            GUI:PopItemWidth()
+
+            if State.targetResolveMode == 3 then
                 GUI:PushItemWidth(150)
-                State.targetID = GUI:InputInt("目标 ID##ArgusTgtID", State.targetID)
+                State.targetID = GUI:InputInt("目标 ContentID##ArgusTgtID", State.targetID)
                 GUI:PopItemWidth()
+            elseif State.targetResolveMode == 4 then
+                State.targetName = GUI:InputText("目标名称##ArgusTgtName", State.targetName)
+            elseif State.targetResolveMode == 5 then
+                State.targetFilter = GUI:InputText("目标过滤串##ArgusTgtFilter", State.targetFilter)
             end
+
+            if State.targetResolveMode ~= 1 then
+                State.targetRequireVisible = GUI:Checkbox("目标仅可见##ArgusTgtVisible", State.targetRequireVisible)
+                GUI:SameLine(0, 10)
+                State.targetRequireTargetable = GUI:Checkbox("目标仅可选中##ArgusTgtTargetable", State.targetRequireTargetable)
+            end
+
+            SyncLegacyTargetSelectorFlags()
 
             GUI:Unindent(10)
         end
@@ -1976,14 +2354,10 @@ M.DrawArgusBuilderUI = function()
 
         if State.attachMode == 1 then
             State.usePlayerPos = GUI:Checkbox("使用玩家当前位置##ArgusPlayerPos", State.usePlayerPos)
-            if GUI:IsItemHovered() then
-                GUI:SetTooltip("自动读取角色当前坐标填入")
-            end
+            ItemTooltip("自动读取角色当前坐标填入")
             GUI:SameLine(0, 10)
             State.followPlayerPos = GUI:Checkbox("跟随玩家##ArgusFollowPos", State.followPlayerPos)
-            if GUI:IsItemHovered() then
-                GUI:SetTooltip("生成代码使用 Player.pos 动态坐标，绘图跟随角色移动")
-            end
+            ItemTooltip("生成代码使用 Player.pos 动态坐标，绘图跟随角色移动")
             if State.usePlayerPos then
                 SyncPlayerPos()
                 GUI:TextColored(C.hint[1], C.hint[2], C.hint[3], C.hint[4],
@@ -2141,10 +2515,10 @@ M.DrawArgusBuilderUI = function()
             State.headingSource, hsChanged = GUI:Combo("朝向来源##ArgusHS", State.headingSource, HeadingSourceNames, #HeadingSourceNames)
             GUI:PopItemWidth()
 
-            -- "实体朝向" 仅 OnEnt 可用，坐标模式自动回退
+            -- "实体/资源朝向" 仅 OnEnt / MapEffect 资源可用，普通坐标模式自动回退
             if State.headingSource == 2 and State.attachMode ~= 2 then
                 GUI:SameLine(0, 5)
-                GUI:TextColored(1, 0.8, 0.2, 1, "(坐标模式下回退为固定角度)")
+                GUI:TextColored(1, 0.8, 0.2, 1, "(普通坐标下回退固定角度；MapEffect 特效位置可用资源朝向)")
             end
 
             -- 固定角度：显示角度滑条
@@ -2155,8 +2529,40 @@ M.DrawArgusBuilderUI = function()
                 SyncPlayerPos()
                 GUI:SameLine(0, 10)
                 local srcLabel = HeadingSourceNames[State.headingSource] or "?"
+                local previewHeadingDeg = math.deg(ResolveCoordHeadingPreview(State, {
+                    x = State.posX,
+                    y = State.posY,
+                    z = State.posZ,
+                }, 1))
                 GUI:TextColored(C.hint[1], C.hint[2], C.hint[3], C.hint[4],
-                    string.format("(%s  偏移: %s°)", srcLabel, FormatNum(State.quickDirOffset)))
+                    string.format("(%s  当前: %s°  偏移: %s°)", srcLabel, FormatNum(previewHeadingDeg), FormatNum(State.quickDirOffset)))
+            end
+
+            if State.headingSource == 5 then
+                GUI:Spacing()
+                GUI:TextColored(C.hint[1], C.hint[2], C.hint[3], C.hint[4], "朝向目标点")
+                GUI:PushItemWidth(110)
+                State.headingTargetX = GUI:InputFloat("目标 X##HeadingTargetX", State.headingTargetX, 0, 0)
+                GUI:SameLine(0, 6)
+                State.headingTargetY = GUI:InputFloat("Y##HeadingTargetY", State.headingTargetY, 0, 0)
+                GUI:SameLine(0, 6)
+                State.headingTargetZ = GUI:InputFloat("Z##HeadingTargetZ", State.headingTargetZ, 0, 0)
+                GUI:PopItemWidth()
+
+                if GUI:Button("用当前位置##HeadingTargetCurrent", 96, 20) then
+                    State.headingTargetX = State.posX
+                    State.headingTargetY = State.posY
+                    State.headingTargetZ = State.posZ
+                end
+                GUI:SameLine(0, 6)
+                if GUI:Button("用当前目标##HeadingTargetTarget", 96, 20) then
+                    local tgt = Player and Player.GetTarget and Player:GetTarget()
+                    if tgt and tgt.pos then
+                        State.headingTargetX = tgt.pos.x or 0
+                        State.headingTargetY = tgt.pos.y or 0
+                        State.headingTargetZ = tgt.pos.z or 0
+                    end
+                end
             end
 
             -- 快捷方向按钮 (设置相对偏移，不改变朝向来源)
@@ -2211,20 +2617,16 @@ M.DrawArgusBuilderUI = function()
             -- 当前颜色预览 (填充+描边色块)
             GUI:SameLine(0, 10)
             -- 填充色块
-            GUI:PushStyleColor(GUI.Col_Button, State.fillR, State.fillG, State.fillB, State.fillA)
-            GUI:PushStyleColor(GUI.Col_ButtonHovered, State.fillR, State.fillG, State.fillB, State.fillA)
-            GUI:PushStyleColor(GUI.Col_ButtonActive, State.fillR, State.fillG, State.fillB, State.fillA)
+            PushSolidColor(State.fillR, State.fillG, State.fillB, State.fillA)
             GUI:Button("  ##FillPrev", 30, 14)
-            GUI:PopStyleColor(3)
+            PopSolidColor()
             GUI:SameLine(0, 2)
             GUI:TextColored(C.hint[1], C.hint[2], C.hint[3], C.hint[4], "填充")
             GUI:SameLine(0, 6)
             -- 描边色块
-            GUI:PushStyleColor(GUI.Col_Button, State.outlineR, State.outlineG, State.outlineB, State.outlineA)
-            GUI:PushStyleColor(GUI.Col_ButtonHovered, State.outlineR, State.outlineG, State.outlineB, State.outlineA)
-            GUI:PushStyleColor(GUI.Col_ButtonActive, State.outlineR, State.outlineG, State.outlineB, State.outlineA)
+            PushSolidColor(State.outlineR, State.outlineG, State.outlineB, State.outlineA)
             GUI:Button("  ##OLPrev", 30, 14)
-            GUI:PopStyleColor(3)
+            PopSolidColor()
             GUI:SameLine(0, 2)
             GUI:TextColored(C.hint[1], C.hint[2], C.hint[3], C.hint[4], "描边")
             if State.useMoogleDrawer then
@@ -2238,9 +2640,7 @@ M.DrawArgusBuilderUI = function()
         GUI:Spacing()
 
             State.useMoogleDrawer = GUI:Checkbox("使用预设配色 (MoogleDrawer)##ArgusMoogle", State.useMoogleDrawer)
-            if GUI:IsItemHovered() then
-                GUI:SetTooltip("使用 TensorCore 内置的蓝紫渐变配色方案\n勾选后忽略下方手动颜色设置")
-            end
+            ItemTooltip("使用 TensorCore 内置的蓝紫渐变配色方案\n勾选后忽略下方手动颜色设置")
 
             if not State.useMoogleDrawer then
                 GUI:Spacing()
@@ -2262,9 +2662,7 @@ M.DrawArgusBuilderUI = function()
                 GUI:Spacing()
 
                 State.useGradient = GUI:Checkbox("启用渐变色##ArgusGrad", State.useGradient)
-                if GUI:IsItemHovered() then
-                    GUI:SetTooltip("开启后可设置起始/中间/结束三色渐变\n仅 Argus2 API 支持")
-                end
+                ItemTooltip("开启后可设置起始/中间/结束三色渐变\n仅 Argus2 API 支持")
 
                 if State.useGradient then
                     -- === 渐变色模式 ===
@@ -2313,14 +2711,10 @@ M.DrawArgusBuilderUI = function()
             GUI:PopItemWidth()
 
             State.oldDraw = GUI:Checkbox("旧绘图模式 (oldDraw)##ArgusOld", State.oldDraw)
-            if GUI:IsItemHovered() then
-                GUI:SetTooltip("启用后绘图会覆盖在模型之上")
-            end
+            ItemTooltip("启用后绘图会覆盖在模型之上")
 
             State.doNotDetect = GUI:Checkbox("不参与 AOE 检测 (doNotDetect)##ArgusDND", State.doNotDetect)
-            if GUI:IsItemHovered() then
-                GUI:SetTooltip("启用后此绘图不会被 Argus 的 AOE 检测系统识别")
-            end
+            ItemTooltip("启用后此绘图不会被 Argus 的 AOE 检测系统识别")
 
             if State.apiLevel == 1 and State.useGradient then
                 GUI:PushItemWidth(150)
@@ -2342,13 +2736,9 @@ M.DrawArgusBuilderUI = function()
             GUI:Spacing()
             GUI:TextColored(C.section[1], C.section[2], C.section[3], C.section[4], "Hitbox 补偿:")
             State.includeTargetHitbox = GUI:Checkbox("加算目标 Hitbox 半径##ArgusHTgt", State.includeTargetHitbox)
-            if GUI:IsItemHovered() then
-                GUI:SetTooltip("生成代码时在半径上加入目标实体的 hitbox 半径\n(类似 Splatoon 的 includeHitbox)")
-            end
+            ItemTooltip("生成代码时在半径上加入目标实体的 hitbox 半径\n(类似 Splatoon 的 includeHitbox)")
             State.includeOwnHitbox = GUI:Checkbox("加算自身 Hitbox 半径##ArgusHOwn", State.includeOwnHitbox)
-            if GUI:IsItemHovered() then
-                GUI:SetTooltip("生成代码时在半径上加入自身的 hitbox 半径")
-            end
+            ItemTooltip("生成代码时在半径上加入自身的 hitbox 半径")
 
             GUI:Unindent(5)
         end
@@ -2390,7 +2780,7 @@ M.DrawArgusBuilderUI = function()
             GUI:Unindent(5)
         end
 
-        elseif State.activeTab == 3 then
+        elseif State.activeTab == TABS.CODE then
 
         -- =============================================
         -- 代码生成工具栏
@@ -2421,14 +2811,10 @@ M.DrawArgusBuilderUI = function()
             end
             T.PopBtn()
             GUI:SameLine(0, 3)
-            GUI:PushStyleColor(GUI.Col_Button, 0.15, 0.65, 0.15, 0.85)
-            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.20, 0.75, 0.20, 0.95)
-            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.10, 0.55, 0.10, 1.0)
-            if GUI:Button("运行##ArgusRun", 50, 28) then
+            if DrawRunBtn("运行##ArgusRun", 50, 28) then
                 if State.generatedCode == "" then SyncPlayerPos(); GenerateCode() end
                 ExecuteCodeString(State.generatedCode)
             end
-            GUI:PopStyleColor(3)
             GUI:SameLine(0, 3)
             T.PushBtn(C.btnStop)
             if GUI:Button("清除##ArgusClear", 50, 28) then
@@ -2453,17 +2839,8 @@ M.DrawArgusBuilderUI = function()
         -- 代码编辑器
         if State.generatedCode ~= "" then
             GUI:Spacing()
-            GUI:PushStyleColor(GUI.Col_FrameBg, 0.10, 0.08, 0.10, 0.95)
-            GUI:PushItemWidth(-1)
-            local lc = 1
-            for _ in string.gmatch(State.generatedCode, "\n") do lc = lc + 1 end
-            local th = math.min(math.max(lc * 16 + 10, 80), 350)
-            local newCode, changed = GUI:InputTextMultiline("##ABCodeOut", State.generatedCode, -1, th, GUI.InputTextFlags_AllowTabInput)
-            if changed then
-                State.generatedCode = newCode
-            end
-            GUI:PopItemWidth()
-            GUI:PopStyleColor(1)
+            local newCode, changed = DrawCodeTextbox("##ABCodeOut", State.generatedCode)
+            if changed then State.generatedCode = newCode end
         else
             T.HintText("点击「生成代码」按钮生成 Lua 代码")
         end
@@ -2479,9 +2856,7 @@ M.DrawArgusBuilderUI = function()
             GUI:Indent(5)
 
             State.condEnabled = GUI:Checkbox("启用条件包装##ArgusCondEn", State.condEnabled)
-            if GUI:IsItemHovered() then
-                GUI:SetTooltip("启用后生成的绘图代码会被 if 条件语句包裹\n只有满足条件时才执行绘图")
-            end
+            ItemTooltip("启用后生成的绘图代码会被 if 条件语句包裹\n只有满足条件时才执行绘图")
 
             if State.condEnabled then
                 GUI:Spacing()
@@ -2708,14 +3083,10 @@ M.DrawArgusBuilderUI = function()
             end
             T.PopBtn()
             GUI:SameLine(0, 4)
-            GUI:PushStyleColor(GUI.Col_Button, 0.15, 0.65, 0.15, 0.85)
-            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.20, 0.75, 0.20, 0.95)
-            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.10, 0.55, 0.10, 1.0)
-            if GUI:Button("运行##ComboRun", 55, 24) then
+            if DrawRunBtn("运行##ComboRun", 55, 24) then
                 if State.comboGeneratedCode == "" then SyncPlayerPos(); GenerateComboCode() end
                 ExecuteCodeString(State.comboGeneratedCode)
             end
-            GUI:PopStyleColor(3)
             GUI:SameLine(0, 4)
             T.PushBtn(C.btnStop)
             if GUI:Button("清除##ComboClearPrev", 55, 24) then
@@ -2732,17 +3103,8 @@ M.DrawArgusBuilderUI = function()
             -- 组合代码编辑器
             if State.comboGeneratedCode ~= "" then
                 GUI:Spacing()
-                GUI:PushStyleColor(GUI.Col_FrameBg, 0.10, 0.08, 0.10, 0.95)
-                GUI:PushItemWidth(-1)
-                local lc = 1
-                for _ in string.gmatch(State.comboGeneratedCode, "\n") do lc = lc + 1 end
-                local th = math.min(math.max(lc * 16 + 10, 80), 350)
-                local newCode, changed = GUI:InputTextMultiline("##ComboCodeOut", State.comboGeneratedCode, -1, th, GUI.InputTextFlags_AllowTabInput)
-                if changed then
-                    State.comboGeneratedCode = newCode
-                end
-                GUI:PopItemWidth()
-                GUI:PopStyleColor(1)
+                local newCode, changed = DrawCodeTextbox("##ComboCodeOut", State.comboGeneratedCode)
+                if changed then State.comboGeneratedCode = newCode end
             end
 
             GUI:Unindent(5)
@@ -2790,7 +3152,7 @@ M.DrawArgusBuilderUI = function()
             local newIE, ieChanged = GUI:InputTextMultiline("##ArgusIEText", State.importExportText, -1, 80, GUI.InputTextFlags_AllowTabInput)
             if ieChanged then State.importExportText = newIE end
             GUI:PopItemWidth()
-            T.HintText("导出: 点击「导出配置」→ 复制文本分享。导入: 粘贴文本 → 点击「导入配置」")
+            T.HintText("支持两种文本格式: ARGUS{...} 配置，ARGUSSTYLE{...} 样式")
 
             GUI:Spacing()
             GUI:Separator()
@@ -2811,6 +3173,24 @@ M.DrawArgusBuilderUI = function()
                 State.lastLog = "样式已粘贴"
             end
             T.PopBtn()
+            GUI:SameLine(0, 5)
+            T.PushBtn(C.btnPrimary)
+            if GUI:Button("导出样式文本##ArgusStyleExportText", 0, 22) then
+                State.importExportText = ExportStyle()
+                State.lastLog = "样式文本已导出到上方文本框"
+            end
+            T.PopBtn()
+            GUI:SameLine(0, 5)
+            T.PushBtn(C.btnSend)
+            if GUI:Button("导入样式文本##ArgusStyleImportText", 0, 22) then
+                local ok, msg = ImportStyle(State.importExportText)
+                if ok then
+                    State.lastLog = msg
+                else
+                    State.lastRunError = "样式导入失败: " .. msg
+                end
+            end
+            T.PopBtn()
             if State.styleClipboard then
                 GUI:SameLine(0, 10)
                 GUI:TextColored(C.hint[1], C.hint[2], C.hint[3], C.hint[4], "(已有样式)")
@@ -2819,7 +3199,19 @@ M.DrawArgusBuilderUI = function()
             GUI:Unindent(5)
         end
 
-        elseif State.activeTab == 4 then
+        -- Tab: MapEffect (特效列表 + 执行控制)
+        elseif State.activeTab == TABS.MAP_EFFECT then
+            if M.DrawEffectListTab then
+                M.DrawEffectListTab()
+            end
+            GUI:Spacing()
+            GUI:Separator()
+            GUI:Spacing()
+            if M.DrawExecControlTab then
+                M.DrawExecControlTab()
+            end
+
+        elseif State.activeTab == TABS.ME_TRIGGER then
 
             -- 代码模式
             local meModeNames = { "TensorReactions OnMapEffect", "Argus.registerOnMapEffect" }
@@ -2845,9 +3237,7 @@ M.DrawArgusBuilderUI = function()
             GUI:PopItemWidth()
 
             State.meCheckA3 = GUI:Checkbox("检查 Flags##MECheckA3", State.meCheckA3)
-            if GUI:IsItemHovered() then
-                GUI:SetTooltip("不勾选则只判断 Index(a1)，忽略 Flags(a3)")
-            end
+            ItemTooltip("不勾选则只判断 Index(a1)，忽略 Flags(a3)")
 
             local posModeNames = { "固定坐标", "特效资源位置", "玩家实时位置" }
             GUI:PushItemWidth(200)
@@ -2857,6 +3247,11 @@ M.DrawArgusBuilderUI = function()
             GUI:PushItemWidth(200)
             State.meLabel = GUI:InputText("备注##MELabel", State.meLabel)
             GUI:PopItemWidth()
+            if State.meResourcePath ~= "" then
+                local shortPath = string.match(State.meResourcePath, "[^/\\]+$") or State.meResourcePath
+                T.HintText("当前资源: " .. shortPath .. " | type=" .. tostring(State.meResourceType or 0))
+                T.HintText(string.format("方向摘要: (%.2f, %.2f, %.2f)", State.meResourceDirX or 0, State.meResourceDirY or 0, State.meResourceDirZ or 0))
+            end
             GUI:Spacing()
 
             -- 添加/清空按钮
@@ -2892,6 +3287,10 @@ M.DrawArgusBuilderUI = function()
                     if entry.label and entry.label ~= "" then
                         summary = summary .. " - " .. entry.label
                     end
+                    if entry.resourcePath and entry.resourcePath ~= "" then
+                        local shortPath = string.match(entry.resourcePath, "[^/\\]+$") or entry.resourcePath
+                        summary = summary .. " <" .. shortPath .. ">"
+                    end
                     GUI:TextColored(C.white[1], C.white[2], C.white[3], C.white[4], summary)
                     GUI:SameLine(0, 5)
                     T.PushBtn(C.btnStop)
@@ -2920,14 +3319,10 @@ M.DrawArgusBuilderUI = function()
             end
             T.PopBtn()
             GUI:SameLine(0, 6)
-            GUI:PushStyleColor(GUI.Col_Button, 0.15, 0.65, 0.15, 0.85)
-            GUI:PushStyleColor(GUI.Col_ButtonHovered, 0.20, 0.75, 0.20, 0.95)
-            GUI:PushStyleColor(GUI.Col_ButtonActive, 0.10, 0.55, 0.10, 1.0)
-            if GUI:Button("运行##MERun", 55, 24) then
+            if DrawRunBtn("运行##MERun", 55, 24) then
                 if State.meGeneratedCode == "" then SyncPlayerPos(); GenerateMapEffectCode() end
                 ExecuteCodeString(State.meGeneratedCode)
             end
-            GUI:PopStyleColor(3)
 
             -- 运行错误信息
             if State.lastRunError ~= "" then
@@ -2936,17 +3331,8 @@ M.DrawArgusBuilderUI = function()
 
             if State.meGeneratedCode ~= "" then
                 GUI:Spacing()
-                GUI:PushStyleColor(GUI.Col_FrameBg, 0.10, 0.08, 0.10, 0.95)
-                GUI:PushItemWidth(-1)
-                local lc = 1
-                for _ in string.gmatch(State.meGeneratedCode, "\n") do lc = lc + 1 end
-                local th = math.min(math.max(lc * 16 + 10, 80), 350)
-                local newCode, changed = GUI:InputTextMultiline("##MECodeOut", State.meGeneratedCode, -1, th, GUI.InputTextFlags_AllowTabInput)
-                if changed then
-                    State.meGeneratedCode = newCode
-                end
-                GUI:PopItemWidth()
-                GUI:PopStyleColor(1)
+                local newCode, changed = DrawCodeTextbox("##MECodeOut", State.meGeneratedCode)
+                if changed then State.meGeneratedCode = newCode end
             end
 
         end -- activeTab
