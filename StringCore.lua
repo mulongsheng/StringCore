@@ -112,7 +112,7 @@ core.Update = function()
         end
         -- 检测队友是否已加载
         if TensorCore and TensorCore.getEntityGroupList then
-            local partyList = TensorCore.getEntityGroupList("Party")
+            local partyList = TensorCore.getEntityGroupList("Party") or {}
             local count = 0
             for _ in pairs(partyList) do count = count + 1 end
             if count > 0 then

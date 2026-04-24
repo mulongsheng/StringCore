@@ -528,9 +528,12 @@ State = {
 -- =============================================
 local function CopyToClipboard(text)
     if GUI and GUI.SetClipboardText then
-        GUI:SetClipboardText(tostring(text))
+        local copied = tostring(text)
+        GUI:SetClipboardText(copied)
         State.lastLog = "代码已复制到剪贴板"
-        d("[ArgusBuilder] 代码已复制到剪贴板")
+        local lineCount = 1
+        for _ in string.gmatch(copied, "\n") do lineCount = lineCount + 1 end
+        d(string.format("[ArgusBuilder] 代码已复制到剪贴板: lines=%d, bytes=%d", lineCount, string.len(copied)))
     end
 end
 
@@ -701,7 +704,7 @@ end
 local function BuildSelectorCodeCondition(spec, entVar)
     local conditions = { entVar }
     if spec.requireVisible then
-        table.insert(conditions, "Argus.isEntityVisible(" .. entVar .. ")")
+        table.insert(conditions, "(not Argus or not Argus.isEntityVisible or Argus.isEntityVisible(" .. entVar .. "))")
     end
     if spec.requireTargetable then
         table.insert(conditions, entVar .. ".targetable")
@@ -753,6 +756,33 @@ local function FormatNum(n)
         return tostring(math.floor(n))
     end
     return string.format("%.2f", n)
+end
+
+local function DebugLog(message)
+    d("[ArgusBuilder] " .. tostring(message))
+end
+
+local function DebugWarn(message)
+    d("[ArgusBuilder][WARN] " .. tostring(message))
+end
+
+local function CountLines(text)
+    if not text or text == "" then return 0 end
+    local count = 1
+    for _ in string.gmatch(text, "\n") do count = count + 1 end
+    return count
+end
+
+local function GetShapeLogName(shape)
+    if not shape then return "nil" end
+    return string.format("%s/%s", tostring(shape.name), tostring(shape.id))
+end
+
+local function GetBuilderModeLog()
+    return string.format("api=%s, timing=%s, attach=%s",
+        ApiLevelNames[State.apiLevel] or tostring(State.apiLevel),
+        TimingModeNames[State.timingMode] or tostring(State.timingMode),
+        AttachModeNames[State.attachMode] or tostring(State.attachMode))
 end
 
 --- 向 lines 表追加 drawer 创建代码（Combo / MapEffect 通用）
@@ -1207,7 +1237,10 @@ end
 -- =============================================
 local function GenerateCode()
     local shape = GetCurrentShape()
-    if not shape then return "" end
+    if not shape then
+        DebugWarn("生成单体代码失败: 无效形状索引=" .. tostring(State.shapeIndex))
+        return ""
+    end
 
     local lines = {}
     local sid = shape.id
@@ -1467,6 +1500,12 @@ local function GenerateCode()
 
     local rawCode = table.concat(lines, "\n")
     State.generatedCode = GenerateConditionWrapper(rawCode)
+    DebugLog(string.format(
+        "生成单体代码: shape=%s, %s, pos=(%s,%s,%s), timeout=%sms, delay=%sms, lines=%d, bytes=%d",
+        GetShapeLogName(shape), GetBuilderModeLog(),
+        FormatNum(State.posX), FormatNum(State.posY), FormatNum(State.posZ),
+        FormatNum(State.timeout), FormatNum(State.delay),
+        CountLines(State.generatedCode), string.len(State.generatedCode)))
     return State.generatedCode
 end
 
@@ -1479,10 +1518,12 @@ local function ExecuteCodeString(code)
     if not code or code == "" then
         State.lastLog = "没有代码可执行"
         State.lastRunError = ""
+        DebugWarn("执行跳过: 代码为空")
         return
     end
 
     ClearPreviewShapes()
+    DebugLog(string.format("开始执行代码: lines=%d, bytes=%d", CountLines(code), string.len(code)))
 
     -- 在代码头部注入 self 变量，避免 self.used = true 报错
     local wrappedCode = "local self = {used = false}\n" .. code
@@ -1491,7 +1532,7 @@ local function ExecuteCodeString(code)
     if not fn then
         State.lastRunError = "编译错误: " .. tostring(compileErr)
         State.lastLog = "代码编译失败"
-        d("[ArgusBuilder] " .. State.lastRunError)
+        DebugWarn(State.lastRunError)
         return
     end
 
@@ -1499,11 +1540,11 @@ local function ExecuteCodeString(code)
     if not ok then
         State.lastRunError = "运行错误: " .. tostring(runErr)
         State.lastLog = "代码运行失败"
-        d("[ArgusBuilder] " .. State.lastRunError)
+        DebugWarn(State.lastRunError)
     else
         State.lastRunError = ""
         State.lastLog = "代码执行成功"
-        d("[ArgusBuilder] 代码执行成功")
+        DebugLog(string.format("代码执行成功: lines=%d, bytes=%d", CountLines(code), string.len(code)))
     end
 end
 
@@ -1513,14 +1554,17 @@ end
 local function ExecutePreview()
     if not Argus2 or not Argus2.ShapeDrawer then
         State.lastLog = "错误: Argus2 API 不可用"
-        d("[ArgusBuilder] 错误: Argus2 不可用")
+        DebugWarn("预览失败: Argus2.ShapeDrawer 不可用")
         return
     end
 
     SyncPlayerPos()
 
     local shape = GetCurrentShape()
-    if not shape then return end
+    if not shape then
+        DebugWarn("预览失败: 无效形状索引=" .. tostring(State.shapeIndex))
+        return
+    end
 
     ClearPreviewShapes()
     local drawer = CreatePreviewDrawer()
@@ -1553,7 +1597,7 @@ local function ExecutePreview()
 
         if #entIDs == 0 then
             State.lastLog = "错误: 未找到匹配实体 - " .. DescribeSelectorSpec(entitySpec)
-            d("[ArgusBuilder] 错误: 未找到匹配实体 - " .. DescribeSelectorSpec(entitySpec))
+            DebugWarn("预览失败: 未找到匹配实体, selector=" .. DescribeSelectorSpec(entitySpec))
             return
         end
 
@@ -1585,7 +1629,11 @@ local function ExecutePreview()
     end
 
     State.lastLog = "预览已执行: " .. shape.name .. " (" .. timeout .. "ms)"
-    d("[ArgusBuilder] 预览: " .. shape.name)
+    DebugLog(string.format(
+        "预览完成: shape=%s, %s, uuids=%d, timeout=%sms, delay=%sms, pos=(%s,%s,%s)",
+        GetShapeLogName(shape), GetBuilderModeLog(), #State.previewUUIDs,
+        FormatNum(timeout), FormatNum(del),
+        FormatNum(x), FormatNum(y), FormatNum(z)))
 end
 
 -- =============================================
@@ -1773,6 +1821,7 @@ local function GenerateComboCode()
         local loopShape = ShapeDefinitions[State.loopShapeIndex]
         if not loopShape then
             State.comboGeneratedCode = "-- 错误: 无效的形状索引"
+            DebugWarn("生成组合代码失败: 无效循环形状索引=" .. tostring(State.loopShapeIndex))
             return
         end
         local step = {
@@ -1861,6 +1910,12 @@ local function GenerateComboCode()
 
     table.insert(lines, "")
     State.comboGeneratedCode = table.concat(lines, "\n")
+    DebugLog(string.format(
+        "生成组合代码: mode=%s, loopShape=%s, steps=%d, loopCount=%d, lines=%d, bytes=%d",
+        ComboModeNames[mode] or tostring(mode),
+        GetShapeLogName(ShapeDefinitions[State.loopShapeIndex]),
+        #State.comboSteps, State.loopCount,
+        CountLines(State.comboGeneratedCode), string.len(State.comboGeneratedCode)))
 end
 
 -- =============================================
@@ -1870,6 +1925,7 @@ local function GenerateMapEffectCode()
     local entries = State.meEntries
     if #entries == 0 then
         State.meGeneratedCode = "-- 没有 MapEffect 触发条件，请先添加"
+        DebugWarn("生成 MapEffect 代码跳过: 没有触发条件")
         return
     end
 
@@ -1962,6 +2018,10 @@ local function GenerateMapEffectCode()
 
     table.insert(lines, "")
     State.meGeneratedCode = table.concat(lines, "\n")
+    DebugLog(string.format(
+        "生成 MapEffect 代码: mode=%s, entries=%d, lines=%d, bytes=%d",
+        isRegister and "Argus.registerOnMapEffect" or "TensorReactions OnMapEffect",
+        #entries, CountLines(State.meGeneratedCode), string.len(State.meGeneratedCode)))
 end
 
 -- =============================================
@@ -1970,6 +2030,7 @@ end
 local function ExecuteComboPreview()
     if not Argus2 or not Argus2.ShapeDrawer then
         State.lastLog = "错误: Argus2 API 不可用"
+        DebugWarn("组合预览失败: Argus2.ShapeDrawer 不可用")
         return
     end
 
@@ -2009,6 +2070,11 @@ local function ExecuteComboPreview()
                     and ResolveCoordHeadingPreview(step, { x = pos.x, y = pos.y, z = pos.z }) or 0
                 previewStep(step, pos.x, pos.y, pos.z, stepHeading, i * State.loopInterval)
             end
+        else
+            DebugWarn(string.format(
+                "组合预览跳过循环模式: loopShape=%s, TensorCore.getPosInDirection=%s",
+                GetShapeLogName(loopShape),
+                tostring(TensorCore and TensorCore.getPosInDirection ~= nil)))
         end
     else
         -- 顺序 / 同时
@@ -2021,7 +2087,10 @@ local function ExecuteComboPreview()
     end
 
     State.lastLog = "组合机制预览已执行"
-    d("[ArgusBuilder] 组合机制预览")
+    DebugLog(string.format(
+        "组合预览完成: mode=%s, uuids=%d, timeout=%sms, pos=(%s,%s,%s)",
+        ComboModeNames[mode] or tostring(mode), #State.previewUUIDs,
+        FormatNum(timeout), FormatNum(x), FormatNum(y), FormatNum(z)))
 end
 
 -- =============================================
@@ -2061,6 +2130,13 @@ M.DrawArgusBuilderUI = function()
                 State.mePosMode = 2
             end
             State.lastLog = "已从 MapEffect 查看器接收: Index=" .. State.meA1
+            DebugLog(string.format(
+                "接收 MapEffect 数据: index=%d, flags=%s, pos=(%s,%s,%s), resource=%s",
+                State.meA1, tostring(M._mapEffectTransfer.a3),
+                FormatNum(M._mapEffectTransfer.posX or 0),
+                FormatNum(M._mapEffectTransfer.posY or 0),
+                FormatNum(M._mapEffectTransfer.posZ or 0),
+                State.meResourcePath ~= "" and State.meResourcePath or "N/A"))
             M._mapEffectTransfer = nil
         end
 

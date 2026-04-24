@@ -52,15 +52,32 @@ local State = {
     runningEffects = {},
     -- 当前标签页
     activeTab = 1,
+    lastRefreshSummary = "",
 }
 
 -- =============================================
 -- 工具函数
 -- =============================================
+local function LogInfo(message)
+    d("[MapEffect] " .. tostring(message))
+end
+
+local function LogWarn(message)
+    d("[MapEffect][WARN] " .. tostring(message))
+end
+
+local function CountLines(text)
+    if not text or text == "" then return 0 end
+    local count = 1
+    for _ in string.gmatch(text, "\n") do count = count + 1 end
+    return count
+end
+
 local function CopyToClipboard(text)
     if GUI and GUI.SetClipboardText then
         GUI:SetClipboardText(tostring(text))
-        d("[MapEffect] 已复制: " .. tostring(text))
+        local copied = tostring(text)
+        LogInfo(string.format("已复制到剪贴板: lines=%d, bytes=%d", CountLines(copied), string.len(copied)))
     end
 end
 
@@ -72,16 +89,34 @@ end
 -- =============================================
 -- 刷新特效数据
 -- =============================================
-local function RefreshEffects()
+local function RefreshEffects(reason)
+    reason = reason or "manual"
     State.effects = {}
-    if not Argus or not Argus.getNumCurrentMapEffects or not Argus.getMapEffectResource then return end
+    if not Argus or not Argus.getNumCurrentMapEffects or not Argus.getMapEffectResource or not Argus.getEffectResourceInfo then
+        local summary = "刷新跳过: Argus MapEffect 基础 API 不完整"
+        if reason ~= "auto" or State.lastRefreshSummary ~= summary then
+            LogWarn(summary)
+        end
+        State.lastRefreshSummary = summary
+        return
+    end
 
     local numEffects = Argus.getNumCurrentMapEffects()
-    if not numEffects or numEffects <= 0 then return end
+    if not numEffects or numEffects <= 0 then
+        local summary = "刷新完成(" .. reason .. "): total=0"
+        if reason ~= "auto" or State.lastRefreshSummary ~= summary then
+            LogInfo(summary)
+        end
+        State.lastRefreshSummary = summary
+        return
+    end
+
+    local loadedCount, unavailableCount, scriptCount, subresourceCount = 0, 0, 0, 0
 
     for i = 0, numEffects - 1 do
         local res = Argus.getMapEffectResource(i)
         if not res then
+            unavailableCount = unavailableCount + 1
             table.insert(State.effects, {
                 index = i, resource = nil, id = 0, path = "(资源不可用)",
                 type = -1, isActive = false,
@@ -93,11 +128,24 @@ local function RefreshEffects()
             })
         end
         if res then
+            loadedCount = loadedCount + 1
             local resId, resPath, resType, isActive = Argus.getEffectResourceInfo(res)
-            local px, py, pz = Argus.getEffectResourcePosition(res)
-            local renderType, renderState = Argus.getEffectResourceRenderInfo(res)
-            local sx, sy, sz = Argus.getEffectResourceScale(res)
-            local dx, dy, dz, ux, uy, uz = Argus.getEffectResourceOrientation(res)
+            local px, py, pz
+            if Argus.getEffectResourcePosition then
+                px, py, pz = Argus.getEffectResourcePosition(res)
+            end
+            local renderType, renderState
+            if Argus.getEffectResourceRenderInfo then
+                renderType, renderState = Argus.getEffectResourceRenderInfo(res)
+            end
+            local sx, sy, sz
+            if Argus.getEffectResourceScale then
+                sx, sy, sz = Argus.getEffectResourceScale(res)
+            end
+            local dx, dy, dz, ux, uy, uz
+            if Argus.getEffectResourceOrientation then
+                dx, dy, dz, ux, uy, uz = Argus.getEffectResourceOrientation(res)
+            end
 
             local entry = {
                 index = i, resource = res,
@@ -114,47 +162,67 @@ local function RefreshEffects()
             }
 
             if resType == 6 then
-                local numScripts = Argus.getNumEffectResourceScripts(res)
+                local numScripts = Argus.getNumEffectResourceScripts and (Argus.getNumEffectResourceScripts(res) or 0) or 0
+                scriptCount = scriptCount + numScripts
                 for si = 0, numScripts - 1 do
-                    local sName, numSub, scriptRes, isRunning = Argus.getEffectResourceScriptInfo(res, si)
+                    local sName, numSub, scriptRes, isRunning
+                    if Argus.getEffectResourceScriptInfo then
+                        sName, numSub, scriptRes, isRunning = Argus.getEffectResourceScriptInfo(res, si)
+                    end
                     local scriptEntry = {
                         index = si, name = sName or "unknown",
                         numSubresources = numSub, scriptResource = scriptRes,
                         isRunning = isRunning, subresources = {},
                     }
-                    if scriptRes and numSub and numSub > 0 then
+                    if scriptRes and numSub and numSub > 0 and Argus.getEffectResourceScriptSubresource then
                         for subi = 0, numSub - 1 do
                             local subRes = Argus.getEffectResourceScriptSubresource(scriptRes, subi)
                             if subRes then
                                 local subId, subPath, subType, subActive = Argus.getEffectResourceInfo(subRes)
-                                local spx, spy, spz = Argus.getEffectResourcePosition(subRes)
+                                local spx, spy, spz
+                                if Argus.getEffectResourcePosition then
+                                    spx, spy, spz = Argus.getEffectResourcePosition(subRes)
+                                end
                                 table.insert(scriptEntry.subresources, {
                                     index = subi, resource = subRes, id = subId,
                                     path = subPath or "", type = subType, isActive = subActive,
                                     position = { x = spx or 0, y = spy or 0, z = spz or 0 },
                                 })
+                                subresourceCount = subresourceCount + 1
                             end
                         end
                     end
                     table.insert(entry.scripts, scriptEntry)
                 end
-                local numFullSub = Argus.getNumEffectSubresources(res)
+                local numFullSub = Argus.getNumEffectSubresources and (Argus.getNumEffectSubresources(res) or 0) or 0
                 for fi = 0, numFullSub - 1 do
-                    local fRes = Argus.getEffectSubresource(res, fi)
+                    local fRes = Argus.getEffectSubresource and Argus.getEffectSubresource(res, fi)
                     if fRes then
                         local fId, fPath, fType, fActive = Argus.getEffectResourceInfo(fRes)
-                        local fpx, fpy, fpz = Argus.getEffectResourcePosition(fRes)
+                        local fpx, fpy, fpz
+                        if Argus.getEffectResourcePosition then
+                            fpx, fpy, fpz = Argus.getEffectResourcePosition(fRes)
+                        end
                         table.insert(entry.subresources, {
                             index = fi, resource = fRes, id = fId,
                             path = fPath or "", type = fType, isActive = fActive,
                             position = { x = fpx or 0, y = fpy or 0, z = fpz or 0 },
                         })
+                        subresourceCount = subresourceCount + 1
                     end
                 end
             end
             table.insert(State.effects, entry)
         end
     end
+
+    local summary = string.format(
+        "刷新完成(%s): total=%d, loaded=%d, unavailable=%d, scripts=%d, subresources=%d",
+        reason, numEffects, loadedCount, unavailableCount, scriptCount, subresourceCount)
+    if reason ~= "auto" or State.lastRefreshSummary ~= summary then
+        LogInfo(summary)
+    end
+    State.lastRefreshSummary = summary
 end
 
 -- =============================================
@@ -194,7 +262,7 @@ local function BuildEntrySummary(entry)
     table.insert(lines, string.format("Orientation: Dir(%.3f,%.3f,%.3f) Up(%.3f,%.3f,%.3f)",
         entry.orientation.dir.x, entry.orientation.dir.y, entry.orientation.dir.z,
         entry.orientation.up.x, entry.orientation.up.y, entry.orientation.up.z))
-    if Argus.getEffectResourceScriptFlagForIndex then
+    if Argus and Argus.getEffectResourceScriptFlagForIndex then
         local flag = Argus.getEffectResourceScriptFlagForIndex(entry.index)
         if flag then table.insert(lines, "ScriptFlag: " .. tostring(flag)) end
     end
@@ -247,25 +315,47 @@ end
 -- 停止特效 (通用逻辑)
 -- =============================================
 local function StopEffect(index)
+    if not Argus or not Argus.getMapEffectResource or not Argus.getEffectResourceInfo then
+        LogWarn("停止跳过: Argus MapEffect 基础 API 不完整, index=" .. tostring(index))
+        return
+    end
     local res = Argus.getMapEffectResource(index)
     if res then
         local _, _, resType, _ = Argus.getEffectResourceInfo(res)
         if resType == 6 then
-            local numScripts = Argus.getNumEffectResourceScripts(res)
+            local numScripts = Argus.getNumEffectResourceScripts and (Argus.getNumEffectResourceScripts(res) or 0) or 0
+            if numScripts <= 0 then
+                LogWarn("停止跳过: 脚本数量为 0, index=" .. tostring(index))
+                return
+            end
             local stopped = false
+            local offCount = 0
             for si = 0, numScripts - 1 do
-                local sName, _, _, _ = Argus.getEffectResourceScriptInfo(res, si)
-                if sName and string.find(sName, "_off") then
+                local sName
+                if Argus.getEffectResourceScriptInfo then
+                    sName = Argus.getEffectResourceScriptInfo(res, si)
+                end
+                if sName and string.find(sName, "_off") and Argus.startEffectResourceScript then
                     Argus.startEffectResourceScript(res, si, 1)
                     stopped = true
+                    offCount = offCount + 1
                 end
             end
-            if not stopped then
+            if not stopped and Argus.stopEffectResourceScript then
                 for si = 0, numScripts - 1 do
                     Argus.stopEffectResourceScript(res, si)
                 end
+                LogInfo(string.format("停止脚本资源: index=%s, scripts=%d, mode=stopAll", tostring(index), numScripts))
+            elseif stopped then
+                LogInfo(string.format("停止脚本资源: index=%s, scripts=%d, offScripts=%d", tostring(index), numScripts, offCount))
+            elseif not Argus.stopEffectResourceScript then
+                LogWarn("停止失败: 缺少 stopEffectResourceScript API, index=" .. tostring(index))
             end
+        else
+            LogInfo(string.format("停止跳过: index=%s, type=%s 不是 Script 资源", tostring(index), tostring(resType)))
         end
+    else
+        LogWarn("停止跳过: 未找到资源, index=" .. tostring(index))
     end
 end
 
@@ -290,9 +380,12 @@ local function DrawDetailPanel(entry)
 
     GUI:Text("渲染: " .. GetTypeName(entry.renderType or 0) .. " | State: " .. tostring(entry.renderState or 0))
 
-    if Argus.getEffectResourceScriptFlagForIndex then
+    if Argus and Argus.getEffectResourceScriptFlagForIndex then
         local flag = Argus.getEffectResourceScriptFlagForIndex(entry.index)
-        local idxFromFlag = Argus.getEffectResourceScriptIndexForFlag(flag)
+        local idxFromFlag = "N/A"
+        if flag and Argus.getEffectResourceScriptIndexForFlag then
+            idxFromFlag = Argus.getEffectResourceScriptIndexForFlag(flag)
+        end
         GUI:Text("Script Flag: " .. tostring(flag) .. "  (Flag>Index: " .. tostring(idxFromFlag) .. ")")
     end
 
@@ -329,12 +422,16 @@ local function DrawDetailPanel(entry)
     State.editPos.z = GUI:InputFloat("Z##pos", State.editPos.z, 0.1, 1.0)
     GUI:SameLine()
     if GUI:Button("应用##setpos") then
-        Argus.setEffectResourcePosition(entry.resource, State.editPos.x, State.editPos.y, State.editPos.z)
+        if Argus and Argus.setEffectResourcePosition then
+            Argus.setEffectResourcePosition(entry.resource, State.editPos.x, State.editPos.y, State.editPos.z)
+        end
     end
     GUI:SameLine(0, 4)
     if GUI:Button("重置##resetpos") then
         State.editPos = { x = State.origPos.x, y = State.origPos.y, z = State.origPos.z }
-        Argus.setEffectResourcePosition(entry.resource, State.origPos.x, State.origPos.y, State.origPos.z)
+        if Argus and Argus.setEffectResourcePosition then
+            Argus.setEffectResourcePosition(entry.resource, State.origPos.x, State.origPos.y, State.origPos.z)
+        end
     end
 
     GUI:Text(string.format("Scale: %.3f, %.3f, %.3f", entry.scale.x, entry.scale.y, entry.scale.z))
@@ -345,12 +442,16 @@ local function DrawDetailPanel(entry)
     State.editScale.z = GUI:InputFloat("Z##scale", State.editScale.z, 0.1, 1.0)
     GUI:SameLine()
     if GUI:Button("应用##setscale") then
-        Argus.setEffectResourceScale(entry.resource, State.editScale.x, State.editScale.y, State.editScale.z)
+        if Argus and Argus.setEffectResourceScale then
+            Argus.setEffectResourceScale(entry.resource, State.editScale.x, State.editScale.y, State.editScale.z)
+        end
     end
     GUI:SameLine(0, 4)
     if GUI:Button("重置##resetscale") then
         State.editScale = { x = State.origScale.x, y = State.origScale.y, z = State.origScale.z }
-        Argus.setEffectResourceScale(entry.resource, State.origScale.x, State.origScale.y, State.origScale.z)
+        if Argus and Argus.setEffectResourceScale then
+            Argus.setEffectResourceScale(entry.resource, State.origScale.x, State.origScale.y, State.origScale.z)
+        end
     end
 
     GUI:Text(string.format("Dir: (%.3f,%.3f,%.3f) Up: (%.3f,%.3f,%.3f)",
@@ -368,17 +469,21 @@ local function DrawDetailPanel(entry)
     State.editOrientUp.z = GUI:InputFloat("uZ##ori", State.editOrientUp.z, 0.1, 1.0)
     GUI:SameLine()
     if GUI:Button("应用##setori") then
-        Argus.setEffectResourceOrientation(entry.resource,
-            State.editOrientDir.x, State.editOrientDir.y, State.editOrientDir.z,
-            State.editOrientUp.x, State.editOrientUp.y, State.editOrientUp.z)
+        if Argus and Argus.setEffectResourceOrientation then
+            Argus.setEffectResourceOrientation(entry.resource,
+                State.editOrientDir.x, State.editOrientDir.y, State.editOrientDir.z,
+                State.editOrientUp.x, State.editOrientUp.y, State.editOrientUp.z)
+        end
     end
     GUI:SameLine(0, 4)
     if GUI:Button("重置##resetori") then
         State.editOrientDir = { x = State.origOrientDir.x, y = State.origOrientDir.y, z = State.origOrientDir.z }
         State.editOrientUp = { x = State.origOrientUp.x, y = State.origOrientUp.y, z = State.origOrientUp.z }
-        Argus.setEffectResourceOrientation(entry.resource,
-            State.origOrientDir.x, State.origOrientDir.y, State.origOrientDir.z,
-            State.origOrientUp.x, State.origOrientUp.y, State.origOrientUp.z)
+        if Argus and Argus.setEffectResourceOrientation then
+            Argus.setEffectResourceOrientation(entry.resource,
+                State.origOrientDir.x, State.origOrientDir.y, State.origOrientDir.z,
+                State.origOrientUp.x, State.origOrientUp.y, State.origOrientUp.z)
+        end
     end
     GUI:PopItemWidth()
 
@@ -394,14 +499,18 @@ local function DrawDetailPanel(entry)
             GUI:SameLine()
             T.PushBtn(C.btnRun)
             if GUI:Button("启动##script" .. script.index) then
-                d(string.format("[MapEffect] startScript: res=%s, scriptIdx=%d", tostring(entry.resource), script.index))
-                Argus.startEffectResourceScript(entry.resource, script.index, 1)
+                if Argus and Argus.startEffectResourceScript then
+                    LogInfo(string.format("启动脚本: index=%d, res=%s, scriptIdx=%d", entry.index, tostring(entry.resource), script.index))
+                    Argus.startEffectResourceScript(entry.resource, script.index, 1)
+                else
+                    LogWarn(string.format("启动脚本失败: 缺少 startEffectResourceScript API, index=%d, scriptIdx=%d", entry.index, script.index))
+                end
             end
             T.PopBtn()
             GUI:SameLine(0, 3)
             T.PushBtn(C.btnStop)
             if GUI:Button("停止##scriptstop" .. script.index) then
-                d(string.format("[MapEffect] stopScript via StopEffect: idx=%d", entry.index))
+                LogInfo(string.format("请求停止脚本资源: index=%d, scriptIdx=%d", entry.index, script.index))
                 StopEffect(entry.index)
             end
             T.PopBtn()
@@ -444,7 +553,10 @@ local function DrawDetailPanel(entry)
             M.ArgusBuilderUI.requestedTab = (M.ArgusBuilderTabs and M.ArgusBuilderTabs.ME_TRIGGER) or 4
             M.ArgusBuilderUI.open = true
         end
-        d("[MapEffect] 已发送到生成器: Index=" .. entry.index)
+        LogInfo(string.format(
+            "发送资源到生成器: index=%d, type=%s, flags=%s, pos=(%.2f,%.2f,%.2f)",
+            entry.index, tostring(entry.type), tostring(M._mapEffectTransfer.a3),
+            entry.position.x, entry.position.y, entry.position.z))
     end
     T.PopBtn()
 
@@ -459,7 +571,7 @@ M.MapEffectAutoRefresh = function()
         local now = os.clock()
         if now - State.lastRefreshTime >= State.refreshInterval then
             State.lastRefreshTime = now
-            RefreshEffects()
+            RefreshEffects("auto")
         end
     end
 end
@@ -468,7 +580,7 @@ end
 -- Tab: 特效列表 (被合并窗口调用)
 -- =============================================
 M.DrawEffectListTab = function()
-    if GUI:Button("刷新##ME", 55, 22) then RefreshEffects() end
+    if GUI:Button("刷新##ME", 55, 22) then RefreshEffects("manual") end
     GUI:SameLine(0, 6)
     State.autoRefresh = GUI:Checkbox("自动##ME", State.autoRefresh)
     if State.autoRefresh then
@@ -544,6 +656,7 @@ M.DrawEffectListTab = function()
                     if GUI:Button("x##run" .. entry.index, 22, 18) then
                         StopEffect(entry.index)
                         table.remove(State.runningEffects, runningIdx)
+                        LogInfo(string.format("从运行列表移除: index=%d", entry.index))
                     end
                     T.PopBtn()
                 else
@@ -553,6 +666,9 @@ M.DrawEffectListTab = function()
                             local flags = Argus.getEffectResourceScriptFlagForIndex and Argus.getEffectResourceScriptFlagForIndex(entry.index) or 0
                             Argus.runMapEffect(entry.index, State.runA2, flags)
                             table.insert(State.runningEffects, { index = entry.index, a2 = State.runA2, flags = flags })
+                            LogInfo(string.format("运行 MapEffect: index=%d, a2=%d, flags=%d, source=list", entry.index, State.runA2, flags))
+                        else
+                            LogWarn("运行 MapEffect 失败: 缺少 runMapEffect API, index=" .. tostring(entry.index))
                         end
                     end
                     T.PopBtn()
@@ -583,6 +699,7 @@ M.DrawExecControlTab = function()
         T.PushBtn(C.btnStop)
         if GUI:Button("全部停止##stopAll", 80, 22) then
             for _, re in ipairs(State.runningEffects) do StopEffect(re.index) end
+            LogInfo("全部停止: count=" .. tostring(#State.runningEffects))
             State.runningEffects = {}
         end
         T.PopBtn()
@@ -595,6 +712,7 @@ M.DrawExecControlTab = function()
             if GUI:Button("停止##r" .. ri) then
                 StopEffect(re.index)
                 table.insert(toRemove, ri)
+                LogInfo(string.format("停止运行记录: listIndex=%d, index=%d", ri, re.index))
             end
             T.PopBtn()
         end
@@ -619,13 +737,23 @@ M.DrawExecControlTab = function()
         if Argus and Argus.runMapEffect then
             Argus.runMapEffect(State.runIndex, State.runA2, State.runFlags)
             table.insert(State.runningEffects, { index = State.runIndex, a2 = State.runA2, flags = State.runFlags })
+            LogInfo(string.format("运行 MapEffect: index=%d, a2=%d, flags=%d, source=manual", State.runIndex, State.runA2, State.runFlags))
+        else
+            LogWarn("运行 MapEffect 失败: 缺少 runMapEffect API, index=" .. tostring(State.runIndex))
         end
     end
     GUI:SameLine(0, 4)
     if GUI:Button("自动Flag##runME", 80, 24) then
         if Argus and Argus.getEffectResourceScriptFlagForIndex then
             local flag = Argus.getEffectResourceScriptFlagForIndex(State.runIndex)
-            if flag then State.runFlags = flag end
+            if flag then
+                State.runFlags = flag
+                LogInfo(string.format("自动获取 Flag: index=%d, flag=%s", State.runIndex, tostring(flag)))
+            else
+                LogWarn("自动获取 Flag 失败: 返回 nil, index=" .. tostring(State.runIndex))
+            end
+        else
+            LogWarn("自动获取 Flag 失败: 缺少 getEffectResourceScriptFlagForIndex API")
         end
     end
     if GUI:IsItemHovered() then GUI:SetTooltip("根据 Index 自动获取 Flag") end
@@ -633,7 +761,14 @@ M.DrawExecControlTab = function()
     if GUI:Button("Flag>Index##runME", 80, 24) then
         if Argus and Argus.getEffectResourceScriptIndexForFlag then
             local idx = Argus.getEffectResourceScriptIndexForFlag(State.runFlags)
-            if idx then State.runIndex = idx end
+            if idx then
+                State.runIndex = idx
+                LogInfo(string.format("Flag 反查 Index: flag=%d, index=%s", State.runFlags, tostring(idx)))
+            else
+                LogWarn("Flag 反查 Index 失败: 返回 nil, flag=" .. tostring(State.runFlags))
+            end
+        else
+            LogWarn("Flag 反查 Index 失败: 缺少 getEffectResourceScriptIndexForFlag API")
         end
     end
     if GUI:IsItemHovered() then GUI:SetTooltip("根据 Flag 反向查询 Index") end
@@ -642,12 +777,18 @@ M.DrawExecControlTab = function()
     T.PushBtn(C.btnSend)
     if GUI:Button("发送到生成器##runSend", 120, 24) then
         M._mapEffectTransfer = { a1 = State.runIndex, a3 = State.runFlags }
-        if Argus and Argus.getMapEffectResource then
+        if Argus and Argus.getMapEffectResource and Argus.getEffectResourceInfo then
             local res = Argus.getMapEffectResource(State.runIndex)
             if res then
                 local _, resPath, resType = Argus.getEffectResourceInfo(res)
-                local px, py, pz = Argus.getEffectResourcePosition(res)
-                local dx, dy, dz = Argus.getEffectResourceOrientation(res)
+                local px, py, pz
+                if Argus.getEffectResourcePosition then
+                    px, py, pz = Argus.getEffectResourcePosition(res)
+                end
+                local dx, dy, dz
+                if Argus.getEffectResourceOrientation then
+                    dx, dy, dz = Argus.getEffectResourceOrientation(res)
+                end
                 if px then
                     M._mapEffectTransfer.posX = px
                     M._mapEffectTransfer.posY = py
@@ -664,6 +805,10 @@ M.DrawExecControlTab = function()
             M.ArgusBuilderUI.requestedTab = (M.ArgusBuilderTabs and M.ArgusBuilderTabs.ME_TRIGGER) or 4
             M.ArgusBuilderUI.open = true
         end
+        LogInfo(string.format(
+            "发送运行参数到生成器: index=%d, flags=%d, pos=%s",
+            State.runIndex, State.runFlags,
+            M._mapEffectTransfer.posX and string.format("(%.2f,%.2f,%.2f)", M._mapEffectTransfer.posX, M._mapEffectTransfer.posY or 0, M._mapEffectTransfer.posZ or 0) or "N/A"))
     end
     T.PopBtn()
 

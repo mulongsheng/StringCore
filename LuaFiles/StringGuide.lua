@@ -270,19 +270,28 @@ end
 M.GetPartyPlayers = function()
     local members = {}
     local addedIds = {}  -- 记录已添加的 ID，防止重复
+    local rawCount, skippedInvalid, skippedDuplicate = 0, 0, 0
     
     -- 使用 TensorCore API 获取队友
     if TensorCore and TensorCore.getEntityGroupList then
-        for k, v in pairs(TensorCore.getEntityGroupList("Party")) do
-            if not addedIds[v.id] then
+        local partyList = TensorCore.getEntityGroupList("Party") or {}
+        for _, v in pairs(partyList) do
+            rawCount = rawCount + 1
+            if v and v.id and not addedIds[v.id] then
                 table.insert(members, {
                     id = v.id,
                     name = v.name,
                     job = v.job
                 })
                 addedIds[v.id] = true
+            elseif not v or not v.id then
+                skippedInvalid = skippedInvalid + 1
+            else
+                skippedDuplicate = skippedDuplicate + 1
             end
         end
+    else
+        d("[StringCore][WARN] TensorCore.getEntityGroupList 不可用，仅尝试加入玩家自身")
     end
     
     -- 添加玩家自己（如果还没添加）
@@ -294,7 +303,8 @@ M.GetPartyPlayers = function()
         })
     end
     
-    d("[StringCore] 获取到 " .. #members .. " 名队伍成员")
+    d(string.format("[StringCore] 获取队伍成员: raw=%d, final=%d, invalid=%d, duplicate=%d",
+        rawCount, #members, skippedInvalid, skippedDuplicate))
     return members
 end
 
