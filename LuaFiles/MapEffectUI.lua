@@ -4,7 +4,10 @@
 -- =============================================
 
 local M = StringGuide
-if not M then return end
+if not M or not M.UITheme then
+    if d then d("[StringCore][WARN] MapEffectUI.lua 跳过加载: UITheme 未加载") end
+    return
+end
 
 local T = M.UITheme
 local C = T.C

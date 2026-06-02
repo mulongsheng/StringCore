@@ -4,7 +4,10 @@
 -- =============================================
 
 local M = StringGuide
-if not M then return end
+if not M or not M.UITheme then
+    if d then d("[StringCore][WARN] ArgusBuilderUI.lua 跳过加载: UITheme 未加载") end
+    return
+end
 
 local T = M.UITheme
 local C = T.C
@@ -137,6 +140,28 @@ local TimingModeNames = { "Timed (持续时间)", "OnFrame (每帧瞬时)" }
 local AttachModeNames = { "坐标固定", "OnEnt (附着实体)" }
 local EntityResolveModeNames = { "自身", "ContentID", "名称", "自定义过滤串" }
 local TargetResolveModeNames = { "无目标", "当前目标", "ContentID", "名称", "自定义过滤串" }
+local MarkerDefinitions = {
+    { id = 1,  name = "攻击 1" },
+    { id = 2,  name = "攻击 2" },
+    { id = 3,  name = "攻击 3" },
+    { id = 4,  name = "攻击 4" },
+    { id = 5,  name = "攻击 5" },
+    { id = 6,  name = "绑定 1" },
+    { id = 7,  name = "绑定 2" },
+    { id = 8,  name = "绑定 3" },
+    { id = 9,  name = "忽略 1" },
+    { id = 10, name = "忽略 2" },
+    { id = 11, name = "方块" },
+    { id = 12, name = "圆圈" },
+    { id = 13, name = "加号" },
+    { id = 14, name = "三角" },
+    { id = 15, name = "攻击 6" },
+    { id = 16, name = "攻击 7" },
+    { id = 17, name = "攻击 8" },
+}
+local MarkerDisplayNames = ExtractNames(MarkerDefinitions)
+local MarkerTargetModeNames = { "自身", "当前目标", "小队序号", "队友名称", "MuAiGuide 职能位", "自定义 entityID 表达式" }
+local PartyRoleNames = { "MT", "ST", "H1", "H2", "D1", "D2", "D3", "D4" }
 local HeadingSourceNames = {
     "玩家朝向",
     "实体/资源朝向",
@@ -257,6 +282,16 @@ end
 -- 预览绘图分派表
 -- =============================================
 
+local function CanUseTensorMoogleDrawer()
+    return State
+        and State.useMoogleDrawer
+        and TensorCore
+        and TensorCore.getMoogleDrawer
+    and MoogleTelegraphs
+    and MoogleTelegraphs.Settings
+        and not (ArgusNativeStatus and ArgusNativeStatus.fallback)
+end
+
 --- Timed 坐标模式预览 (d=drawer, t=timeout, h=headingRad, a=angleRad, S=State/step, del=delay)
 local PreviewTimedCoord = {
     Circle       = function(d, t, x, y, z, h, a, S, del) return d:addTimedCircle(t, x, y, z, S.radius, del) end,
@@ -290,7 +325,7 @@ local PreviewTimedEnt = {
 
 --- 创建预览用 ShapeDrawer
 local function CreatePreviewDrawer()
-    if State.useMoogleDrawer and TensorCore and TensorCore.getMoogleDrawer then
+    if CanUseTensorMoogleDrawer() then
         return TensorCore.getMoogleDrawer()
     end
     local fR, fG, fB, fA = State.fillR or 0.8, State.fillG or 0, State.fillB or 1, State.fillA or 0.5
@@ -305,7 +340,11 @@ local function CreatePreviewDrawer()
     else
         startU32 = fillU32
     end
-    return Argus2.ShapeDrawer:new(startU32, midU32, fillU32, outlineU32, State.outlineThickness or 1.5)
+    local drawer = Argus2.ShapeDrawer:new(startU32, midU32, fillU32, outlineU32, State.outlineThickness or 1.5)
+    if State.useGradient and drawer and drawer.setGradient then
+        drawer:setGradient(State.gradientIntensity or 3, State.gradientMinOpacity or 0.05)
+    end
+    return drawer
 end
 
 --- 清除所有预览绘图
@@ -444,6 +483,14 @@ State = {
     -- 生成的代码
     generatedCode = "",
 
+    -- 玩家/队友标点
+    markerActionIndex = 1,
+    markerTargetMode = 1,       -- 1=自身, 2=当前目标, 3=小队序号, 4=队友名称, 5=MuAiGuide 职能位, 6=自定义表达式
+    markerPartyIndex = 1,
+    markerTargetName = "",
+    markerRoleIndex = 1,
+    markerEntityExpr = "entityID",
+
     -- 预览 UUID 列表（用于清理）
     previewUUIDs = {},
 
@@ -466,7 +513,7 @@ State = {
     meA3 = 0,
     meCheckA3 = true,       -- 是否检查 a3 (flags)
     meLabel = "",           -- 机制备注
-    meCodeMode = 1,         -- 1=TensorReactions, 2=Argus.registerOnMapEffect
+    meCodeMode = 2,         -- 1=TensorReactions(不可用), 2=Argus.registerOnMapEffect
     mePosMode = 1,          -- 1=固定坐标, 2=特效位置, 3=玩家位置
     meResourcePath = "",
     meResourceType = 0,
@@ -787,7 +834,7 @@ end
 
 --- 向 lines 表追加 drawer 创建代码（Combo / MapEffect 通用）
 local function AppendDrawerCreation(lines, comment)
-    if State.useMoogleDrawer then
+    if CanUseTensorMoogleDrawer() then
         table.insert(lines, "local drawer = TensorCore.getMoogleDrawer()")
     else
         if comment then table.insert(lines, comment) end
@@ -798,6 +845,9 @@ local function AppendDrawerCreation(lines, comment)
                 FormatColor(State.endR, State.endG, State.endB, State.endA),
                 FormatColor(State.outlineR, State.outlineG, State.outlineB, State.outlineA),
                 FormatNum(State.outlineThickness)))
+            table.insert(lines, string.format("drawer:setGradient(%s, %s)",
+                FormatNum(State.gradientIntensity or 3),
+                FormatNum(State.gradientMinOpacity or 0.05)))
         else
             table.insert(lines, string.format("local drawer = Argus2.ShapeDrawer:new(nil, nil, %s, %s, %s)",
                 FormatColor(State.fillR, State.fillG, State.fillB, State.fillA),
@@ -1014,6 +1064,8 @@ local ExportableFields = {
     "overlayTextEnabled", "overlayText", "overlayVOffset", "overlayFontScale",
     "tetherEnabled", "tetherMode", "tetherExtraLength",
     "includeTargetHitbox", "includeOwnHitbox",
+    "markerActionIndex", "markerTargetMode", "markerPartyIndex",
+    "markerTargetName", "markerRoleIndex", "markerEntityExpr",
 }
 
 --- 简易 Lua 值序列化 (不处理嵌套表)
@@ -1235,6 +1287,102 @@ end
 -- =============================================
 -- 代码生成引擎
 -- =============================================
+local function GetCurrentMarker()
+    return MarkerDefinitions[State.markerActionIndex] or MarkerDefinitions[1]
+end
+
+local function AppendPartyMemberResolver(lines)
+    table.insert(lines, "local function _getPartyMembers()")
+    table.insert(lines, "    local members = {}")
+    table.insert(lines, "    local seen = {}")
+    table.insert(lines, "    local function _push(ent)")
+    table.insert(lines, "        if ent and ent.id and not seen[ent.id] then")
+    table.insert(lines, "            seen[ent.id] = true")
+    table.insert(lines, "            table.insert(members, ent)")
+    table.insert(lines, "        end")
+    table.insert(lines, "    end")
+    table.insert(lines, "    _push(Player)")
+    table.insert(lines, "    if TensorCore and TensorCore.getEntityGroupList then")
+    table.insert(lines, "        for _, ent in pairs(TensorCore.getEntityGroupList(\"Party\") or {}) do")
+    table.insert(lines, "            _push(ent)")
+    table.insert(lines, "        end")
+    table.insert(lines, "    end")
+    table.insert(lines, "    if #members <= 1 and TensorCore and TensorCore.entityList then")
+    table.insert(lines, "        for _, ent in pairs(TensorCore.entityList(\"Party\") or {}) do")
+    table.insert(lines, "            _push(ent)")
+    table.insert(lines, "        end")
+    table.insert(lines, "    end")
+    table.insert(lines, "    return members")
+    table.insert(lines, "end")
+end
+
+local function AppendMarkerTargetCode(lines)
+    local mode = State.markerTargetMode or 1
+
+    if mode == 1 then
+        table.insert(lines, "local entityID = Player.id")
+    elseif mode == 2 then
+        table.insert(lines, "local target = Player:GetTarget()")
+        table.insert(lines, "if not target then return end")
+        table.insert(lines, "local entityID = target.id")
+    elseif mode == 3 then
+        AppendPartyMemberResolver(lines)
+        table.insert(lines, string.format("local target = _getPartyMembers()[%d]", State.markerPartyIndex or 1))
+        table.insert(lines, "if not target then return end")
+        table.insert(lines, "local entityID = target.id")
+    elseif mode == 4 then
+        AppendPartyMemberResolver(lines)
+        table.insert(lines, string.format("local targetName = %q", State.markerTargetName or ""))
+        table.insert(lines, "local target")
+        table.insert(lines, "for _, member in ipairs(_getPartyMembers()) do")
+        table.insert(lines, "    if member.name == targetName then")
+        table.insert(lines, "        target = member")
+        table.insert(lines, "        break")
+        table.insert(lines, "    end")
+        table.insert(lines, "end")
+        table.insert(lines, "if not target then return end")
+        table.insert(lines, "local entityID = target.id")
+    elseif mode == 5 then
+        local role = PartyRoleNames[State.markerRoleIndex] or "MT"
+        table.insert(lines, string.format("local role = %q", role))
+        table.insert(lines, "if MuAiGuide and MuAiGuide.LoadParty and (not MuAiGuide.Party or not MuAiGuide.Party[role]) then")
+        table.insert(lines, "    MuAiGuide.LoadParty()")
+        table.insert(lines, "end")
+        table.insert(lines, "local target = MuAiGuide and MuAiGuide.Party and MuAiGuide.Party[role] or nil")
+        table.insert(lines, "if not target then return end")
+        table.insert(lines, "local entityID = target.id")
+    else
+        local expr = State.markerEntityExpr
+        if not expr or expr == "" then expr = "entityID" end
+        table.insert(lines, "local entityID = " .. expr)
+        table.insert(lines, "if not entityID then return end")
+    end
+end
+
+local function GenerateMarkerCode()
+    local marker = GetCurrentMarker()
+    local lines = {}
+
+    table.insert(lines, "-- 玩家/队友标点代码 (由 StringCore ArgusBuild 生成)")
+    table.insert(lines, "-- 标点: " .. marker.name .. " / ActionList MARKER")
+    table.insert(lines, "")
+    AppendMarkerTargetCode(lines)
+    table.insert(lines, "")
+    table.insert(lines, string.format("local markerAction = ActionList and ActionList.Get and ActionList:Get(%d, 13) or nil", marker.id))
+    table.insert(lines, "if markerAction then")
+    table.insert(lines, "    markerAction:Cast(entityID)")
+    table.insert(lines, "end")
+    table.insert(lines, "self.used = true")
+    table.insert(lines, "")
+
+    State.generatedCode = table.concat(lines, "\n")
+    DebugLog(string.format(
+        "生成玩家标点代码: marker=%s(%d), targetMode=%d, lines=%d, bytes=%d",
+        marker.name, marker.id, State.markerTargetMode or 1,
+        CountLines(State.generatedCode), string.len(State.generatedCode)))
+    return State.generatedCode
+end
+
 local function GenerateCode()
     local shape = GetCurrentShape()
     if not shape then
@@ -1317,7 +1465,7 @@ local function GenerateCode()
             table.insert(lines, "-- StaticDrawer: 仅用于 OnFrame，无渐变")
             table.insert(lines, string.format("local drawer = TensorCore.getStaticDrawer(%s, %s)",
                 outlineColor, FormatNum(State.outlineThickness)))
-        elseif State.useMoogleDrawer then
+        elseif CanUseTensorMoogleDrawer() then
             table.insert(lines, "-- 使用 TensorCore 默认配色")
             table.insert(lines, "local drawer = TensorCore.getMoogleDrawer()")
         elseif State.useGradient then
@@ -1328,6 +1476,9 @@ local function GenerateCode()
             table.insert(lines, "-- 创建渐变色绘图器")
             table.insert(lines, string.format("local drawer = Argus2.ShapeDrawer:new(\n    %s,  -- 起始颜色\n    %s,  -- 中间颜色\n    %s,  -- 结束颜色\n    %s,  -- 描边颜色\n    %s  -- 描边粗细\n)",
                 startColor, midColor, endColor, outlineColor, FormatNum(State.outlineThickness)))
+            table.insert(lines, string.format("drawer:setGradient(%s, %s)",
+                FormatNum(State.gradientIntensity or 3),
+                FormatNum(State.gradientMinOpacity or 0.05)))
         else
             local fillColor = FormatColor(State.fillR, State.fillG, State.fillB, State.fillA)
             local outlineColor = FormatColor(State.outlineR, State.outlineG, State.outlineB, State.outlineA)
@@ -1438,9 +1589,9 @@ local function GenerateCode()
 
             if sid == "Circle" then
                 local radiusExpr = useHitbox and "(" .. FormatNum(State.radius) .. " + _hitboxExtra)" or FormatNum(State.radius)
-                table.insert(lines, string.format("%s(\n    %s, %s, %s,  -- timeout, x, y, z\n    %s,  -- colorStart, colorEnd\n    %s,  -- radius\n    50,  -- segments\n    %s,  -- delay\n    nil,  -- entityAttachID\n    colorOutline,  -- 描边颜色\n    %s  -- 描边粗细\n)",
+                table.insert(lines, string.format("%s(\n    %s, %s, %s,  -- timeout, x, y, z\n    %s,  -- radius\n    50,  -- segments\n    %s,  -- colorStart, colorEnd\n    %s,  -- delay\n    nil,  -- entityAttachID\n    colorOutline,  -- 描边颜色\n    %s  -- 描边粗细\n)",
                     methodName, FormatNum(State.timeout), "x", "y, z",
-                    colorArgs, radiusExpr,
+                    radiusExpr, colorArgs,
                     FormatNum(State.delay), FormatNum(State.outlineThickness)))
             else
                 table.insert(lines, "-- 请参考 TensorCore API Reference 了解 " .. methodName .. " 的完整参数列表")
@@ -1493,7 +1644,7 @@ local function GenerateCode()
         table.insert(lines, "-- [提示] 动态更新已创建的绘图:")
         table.insert(lines, "-- drawer:updateTimed" .. shape.id .. "(uuid, nil, newX, newY, newZ, newRadius)  -- 参数传 nil 保持原值")
         table.insert(lines, "-- Argus.deleteTimedShape(uuid)  -- 删除单个绘图")
-        table.insert(lines, "-- Argus.deleteTimedShape()       -- 删除全部绘图")
+        table.insert(lines, "-- 注意: 不建议调用无参 Argus.deleteTimedShape()，它会删除所有模块的 timed 绘图")
     end
 
     table.insert(lines, "")
@@ -1525,8 +1676,11 @@ local function ExecuteCodeString(code)
     ClearPreviewShapes()
     DebugLog(string.format("开始执行代码: lines=%d, bytes=%d", CountLines(code), string.len(code)))
 
-    -- 在代码头部注入 self 变量，避免 self.used = true 报错
-    local wrappedCode = "local self = {used = false}\n" .. code
+    local wrappedCode = code
+    local useSandboxEnv = type(setfenv) == "function"
+    if not useSandboxEnv then
+        wrappedCode = "local self = {used = false}\n" .. code
+    end
 
     local fn, compileErr = loadstring(wrappedCode)
     if not fn then
@@ -1534,6 +1688,18 @@ local function ExecuteCodeString(code)
         State.lastLog = "代码编译失败"
         DebugWarn(State.lastRunError)
         return
+    end
+
+    if useSandboxEnv then
+        local execEnv = setmetatable({
+            self = { used = false },
+            data = _G.data or {},
+            eventArgs = _G.eventArgs or {},
+        }, {
+            __index = _G,
+            __newindex = _G,
+        })
+        setfenv(fn, execEnv)
     end
 
     local ok, runErr = pcall(fn)
@@ -1563,6 +1729,13 @@ local function ExecutePreview()
     local shape = GetCurrentShape()
     if not shape then
         DebugWarn("预览失败: 无效形状索引=" .. tostring(State.shapeIndex))
+        return
+    end
+
+    if State.timingMode == 2 then
+        State.lastLog = "OnFrame 模式需放入 Gameloop.Draw 每帧绘制，不能一次性预览"
+        State.lastRunError = ""
+        DebugWarn("预览跳过: OnFrame 模式不能用 Timed 预览")
         return
     end
 
@@ -1921,6 +2094,40 @@ end
 -- =============================================
 -- MapEffect 触发器代码生成
 -- =============================================
+local function BuildMapEffectRegisterKey(entries)
+    local parts = {
+        tostring(State.useMoogleDrawer),
+        tostring(State.useGradient),
+        FormatNum(State.fillR), FormatNum(State.fillG), FormatNum(State.fillB), FormatNum(State.fillA),
+        FormatNum(State.outlineR), FormatNum(State.outlineG), FormatNum(State.outlineB), FormatNum(State.outlineA),
+    }
+
+    for _, entry in ipairs(entries) do
+        table.insert(parts, table.concat({
+            tostring(entry.a1 or ""),
+            entry.checkA3 and tostring(entry.a3 or "") or "*",
+            tostring(entry.shapeId or ""),
+            tostring(entry.posMode or ""),
+            FormatNum(entry.timeout or 0),
+            FormatNum(entry.delay or 0),
+            FormatNum(entry.posX or 0),
+            FormatNum(entry.posY or 0),
+            FormatNum(entry.posZ or 0),
+            FormatNum(entry.radius or 0),
+            FormatNum(entry.length or 0),
+            FormatNum(entry.width or 0),
+            FormatNum(entry.angle or 0),
+        }, ":"))
+    end
+
+    local signature = table.concat(parts, "|")
+    local hash = 0
+    for i = 1, #signature do
+        hash = (hash * 31 + string.byte(signature, i)) % 1000000007
+    end
+    return "StringCore_ME_" .. tostring(hash)
+end
+
 local function GenerateMapEffectCode()
     local entries = State.meEntries
     if #entries == 0 then
@@ -1936,8 +2143,8 @@ local function GenerateMapEffectCode()
     if isRegister then
         table.insert(lines, "-- 模式: Argus.registerOnMapEffect (独立注册)")
     else
-        table.insert(lines, "-- 模式: TensorReactions OnMapEffect 事件")
-        table.insert(lines, "-- 在 TensorReactions 中创建触发器，事件类型选择 OnMapEffect")
+        table.insert(lines, "-- 模式: TensorReactions OnMapEffect 事件 (不推荐)")
+        table.insert(lines, "-- 警告: 开发文档确认 TensorReactions OnMapEffect 的 a1/a2/a3 为 nil")
     end
     table.insert(lines, "")
 
@@ -1947,8 +2154,18 @@ local function GenerateMapEffectCode()
 
     local bi = ""  -- base indent
     if isRegister then
-        table.insert(lines, "Argus.registerOnMapEffect(function(a1, a2, a3)")
-        bi = "    "
+        local registerKey = BuildMapEffectRegisterKey(entries)
+        table.insert(lines, "if not Argus or not Argus.registerOnMapEffect then")
+        table.insert(lines, "    d(\"[StringCore] Argus.registerOnMapEffect 不可用\")")
+        table.insert(lines, "else")
+        table.insert(lines, "    local registerKey = " .. string.format("%q", registerKey))
+        table.insert(lines, "    StringCore_ME_Registered = StringCore_ME_Registered or {}")
+        table.insert(lines, "    if StringCore_ME_Registered[registerKey] then")
+        table.insert(lines, "        d(\"[StringCore] MapEffect 回调已注册: \" .. registerKey)")
+        table.insert(lines, "    else")
+        table.insert(lines, "        StringCore_ME_Registered[registerKey] = true")
+        table.insert(lines, "        Argus.registerOnMapEffect(function(a1, a2, a3)")
+        bi = "            "
     end
 
     for i, entry in ipairs(entries) do
@@ -2013,7 +2230,9 @@ local function GenerateMapEffectCode()
     end
 
     if isRegister then
-        table.insert(lines, "end)")
+        table.insert(lines, "        end)")
+        table.insert(lines, "    end")
+        table.insert(lines, "end")
     end
 
     table.insert(lines, "")
@@ -2250,8 +2469,10 @@ M.DrawArgusBuilderUI = function()
         GUI:Separator()
         GUI:Spacing()
 
-        -- MapEffect 自动刷新
-        if M.MapEffectAutoRefresh then M.MapEffectAutoRefresh() end
+        -- MapEffect 扫描只在对应页签运行，避免 Builder/代码页持续遍历资源。
+        if State.activeTab == TABS.MAP_EFFECT and M.MapEffectAutoRefresh then
+            M.MapEffectAutoRefresh()
+        end
 
         -- Tab: Argus Builder
         if State.activeTab == TABS.BUILDER then
@@ -2888,15 +3109,20 @@ M.DrawArgusBuilderUI = function()
             T.PopBtn()
             GUI:SameLine(0, 3)
             if DrawRunBtn("运行##ArgusRun", 50, 28) then
-                if State.generatedCode == "" then SyncPlayerPos(); GenerateCode() end
-                ExecuteCodeString(State.generatedCode)
+                if State.timingMode == 2 then
+                    State.lastLog = "OnFrame 代码需注册到 Gameloop.Draw 每帧执行"
+                    State.lastRunError = ""
+                    DebugWarn("运行跳过: OnFrame 代码不能一次性执行")
+                else
+                    if State.generatedCode == "" then SyncPlayerPos(); GenerateCode() end
+                    ExecuteCodeString(State.generatedCode)
+                end
             end
             GUI:SameLine(0, 3)
             T.PushBtn(C.btnStop)
             if GUI:Button("清除##ArgusClear", 50, 28) then
                 ClearPreviewShapes()
-                if Argus and Argus.deleteTimedShape then Argus.deleteTimedShape() end
-                State.lastLog = "已清除所有绘图"
+                State.lastLog = "已清除 StringCore 预览绘图"
             end
             T.PopBtn()
 
@@ -2905,6 +3131,10 @@ M.DrawArgusBuilderUI = function()
                 GUI:SameLine(0, 10)
                 T.SuccessText(State.lastLog)
             end
+        end
+
+        if State.timingMode == 2 then
+            T.HintText("OnFrame 模式只生成瞬时绘图代码，请放入 Gameloop.Draw/OnFrame 中每帧调用。")
         end
 
         -- 运行错误信息
@@ -2919,6 +3149,66 @@ M.DrawArgusBuilderUI = function()
             if changed then State.generatedCode = newCode end
         else
             T.HintText("点击「生成代码」按钮生成 Lua 代码")
+        end
+
+        GUI:Spacing()
+        GUI:Separator()
+        GUI:Spacing()
+
+        -- =============================================
+        -- 玩家/队友标点
+        -- =============================================
+        if GUI:CollapsingHeader("玩家/队友标点 - ActionList MARKER##ArgusMarker") then
+            GUI:Indent(5)
+
+            GUI:PushItemWidth(180)
+            State.markerActionIndex = GUI:Combo("标点类型##ArgusMarkerAction", State.markerActionIndex, MarkerDisplayNames, #MarkerDisplayNames)
+            State.markerTargetMode = GUI:Combo("标点目标##ArgusMarkerTargetMode", State.markerTargetMode, MarkerTargetModeNames, #MarkerTargetModeNames)
+            GUI:PopItemWidth()
+
+            if State.markerTargetMode == 3 then
+                GUI:PushItemWidth(100)
+                State.markerPartyIndex = GUI:SliderInt("小队序号##ArgusMarkerPartyIndex", State.markerPartyIndex, 1, 8)
+                GUI:PopItemWidth()
+                T.HintText("按 TensorCore Party 列表顺序取队友；单人时通常第 1 个是自己")
+            elseif State.markerTargetMode == 4 then
+                GUI:PushItemWidth(220)
+                State.markerTargetName = GUI:InputText("队友名称##ArgusMarkerTargetName", State.markerTargetName)
+                GUI:PopItemWidth()
+            elseif State.markerTargetMode == 5 then
+                GUI:PushItemWidth(120)
+                State.markerRoleIndex = GUI:Combo("职能位##ArgusMarkerRole", State.markerRoleIndex, PartyRoleNames, #PartyRoleNames)
+                GUI:PopItemWidth()
+                T.HintText("使用 MuAiGuide.Party，未初始化时会先尝试 MuAiGuide.LoadParty()")
+            elseif State.markerTargetMode == 6 then
+                GUI:PushItemWidth(220)
+                State.markerEntityExpr = GUI:InputText("entityID 表达式##ArgusMarkerEntityExpr", State.markerEntityExpr)
+                GUI:PopItemWidth()
+                T.HintText("例: eventArgs.entityID 或已有变量 entityID")
+            end
+
+            GUI:Spacing()
+            T.PushBtn(C.btnPrimary)
+            if GUI:Button("生成标点代码##ArgusMarkerGen", 110, 24) then
+                GenerateMarkerCode()
+                State.lastLog = "标点代码已生成"
+            end
+            T.PopBtn()
+            GUI:SameLine(0, 5)
+            T.PushBtn(C.btnRun)
+            if GUI:Button("复制##ArgusMarkerCopy", 55, 24) then
+                GenerateMarkerCode()
+                CopyToClipboard(State.generatedCode)
+            end
+            T.PopBtn()
+            GUI:SameLine(0, 5)
+            if DrawRunBtn("运行##ArgusMarkerRun", 55, 24) then
+                GenerateMarkerCode()
+                ExecuteCodeString(State.generatedCode)
+            end
+
+            T.HintText("生成格式: ActionList:Get(markerID, 13):Cast(entityID)")
+            GUI:Unindent(5)
         end
 
         GUI:Spacing()
@@ -3167,7 +3457,7 @@ M.DrawArgusBuilderUI = function()
             T.PushBtn(C.btnStop)
             if GUI:Button("清除##ComboClearPrev", 55, 24) then
                 ClearPreviewShapes()
-                if Argus and Argus.deleteTimedShape then Argus.deleteTimedShape() end
+                State.lastLog = "已清除 StringCore 预览绘图"
             end
             T.PopBtn()
 
@@ -3290,14 +3580,14 @@ M.DrawArgusBuilderUI = function()
         elseif State.activeTab == TABS.ME_TRIGGER then
 
             -- 代码模式
-            local meModeNames = { "TensorReactions OnMapEffect", "Argus.registerOnMapEffect" }
+            local meModeNames = { "TensorReactions OnMapEffect (不可用)", "Argus.registerOnMapEffect" }
             GUI:PushItemWidth(280)
             State.meCodeMode = GUI:Combo("代码模式##MECodeMode", State.meCodeMode, meModeNames)
             GUI:PopItemWidth()
             if State.meCodeMode == 1 then
-                T.HintText("在 TensorReactions 中新建触发器，事件类型选 OnMapEffect")
+                T.DangerText("不推荐: 开发文档确认 TensorReactions OnMapEffect 的 a1/a2/a3 为 nil")
             else
-                T.HintText("生成独立的 Argus.registerOnMapEffect() 注册代码")
+                T.HintText("生成独立的 Argus.registerOnMapEffect() 注册代码，并包含重复注册保护")
             end
 
             GUI:Spacing()
